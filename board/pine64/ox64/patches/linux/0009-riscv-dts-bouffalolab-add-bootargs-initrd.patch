@@ -1,0 +1,26 @@
+From 8e81e9413aaa7c01a73294df771e9e3b5d34289c Mon Sep 17 00:00:00 2001
+From: Allen Martin <armartin@gmail.com>
+Date: Sun, 8 Jan 2023 02:25:29 -0800
+Subject: [PATCH 09/15] riscv: dts: bouffalolab: add bootargs/initrd
+
+---
+ arch/riscv/boot/dts/bouffalolab/bl808-sipeed-m1s.dts | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/arch/riscv/boot/dts/bouffalolab/bl808-sipeed-m1s.dts b/arch/riscv/boot/dts/bouffalolab/bl808-sipeed-m1s.dts
+index 64421fb2ad67..84e5aac6cbf8 100644
+--- a/arch/riscv/boot/dts/bouffalolab/bl808-sipeed-m1s.dts
++++ b/arch/riscv/boot/dts/bouffalolab/bl808-sipeed-m1s.dts
+@@ -17,6 +17,9 @@ aliases {
+ 
+ 	chosen {
+ 		stdout-path = "serial0:2000000n8";
++		bootargs = "console=ttyS0,2000000 loglevel=8 earlycon=sbi root=/dev/mtdblock0 ro rootfstype=squashfs";
++		linux,initrd-start = <0x0 0x52000000>;
++		linux,initrd-end = <0x0 0x52941784>;
+ 	};
+ 
+ 	memory@50000000 {
+-- 
+2.39.0
+

@@ -1,0 +1,214 @@
+From 14d10e1f6fd28f9c760c46b5fd1becd2f2b20f9a Mon Sep 17 00:00:00 2001
+From: Allen Martin <armartin@gmail.com>
+Date: Wed, 11 Jan 2023 18:16:51 -0800
+Subject: [PATCH 12/15] WIP: sdhci: add BFLB sdhci driver
+
+---
+ .../boot/dts/bouffalolab/bl808-sipeed-m1s.dts |   4 +
+ arch/riscv/boot/dts/bouffalolab/bl808.dtsi    |  11 ++
+ drivers/mmc/host/Kconfig                      |  14 +++
+ drivers/mmc/host/Makefile                     |   1 +
+ drivers/mmc/host/sdhci-bflb.c                 | 117 ++++++++++++++++++
+ 5 files changed, 147 insertions(+)
+ create mode 100644 drivers/mmc/host/sdhci-bflb.c
+
+diff --git a/arch/riscv/boot/dts/bouffalolab/bl808-sipeed-m1s.dts b/arch/riscv/boot/dts/bouffalolab/bl808-sipeed-m1s.dts
+index 70259bad7dfd..effaeda67c3f 100644
+--- a/arch/riscv/boot/dts/bouffalolab/bl808-sipeed-m1s.dts
++++ b/arch/riscv/boot/dts/bouffalolab/bl808-sipeed-m1s.dts
+@@ -46,6 +46,10 @@ &uart0 {
+ 	status = "okay";
+ };
+ 
++&sdhci0 {
++	status = "okay";
++};
++
+ &ipclic {
+ 	status = "okay";
+ };
+diff --git a/arch/riscv/boot/dts/bouffalolab/bl808.dtsi b/arch/riscv/boot/dts/bouffalolab/bl808.dtsi
+index c5cda8d74ccd..6f859194f82c 100644
+--- a/arch/riscv/boot/dts/bouffalolab/bl808.dtsi
++++ b/arch/riscv/boot/dts/bouffalolab/bl808.dtsi
+@@ -61,6 +61,17 @@ uart0: serial@30002000 {
+ 			status = "disabled";
+ 		};
+ 
++		sdhci0: sdhci@20060000 {
++			compatible = "bouffalolab,bflb-sdhci";
++			reg = <0x20060000 0x100>;
++			interrupts-extended = <&ipclic BFLB_IPC_SOURCE_M0
++						       BFLB_IPC_DEVICE_SDHCI
++						       IRQ_TYPE_EDGE_RISING>;
++			mboxes = <&ipclic BFLB_IPC_SOURCE_M0 BFLB_IPC_DEVICE_SDHCI>;
++			clocks = <&xtal>;
++			status = "disabled";
++		};
++
+ 		ipclic: mailbox@30005000 {
+ 			compatible = "bouffalolab,bflb-ipc";
+ 			reg = <0x30005000 0x20>,
+diff --git a/drivers/mmc/host/Kconfig b/drivers/mmc/host/Kconfig
+index 5e19a961c34d..f3c4654bb376 100644
+--- a/drivers/mmc/host/Kconfig
++++ b/drivers/mmc/host/Kconfig
+@@ -413,6 +413,20 @@ config MMC_SDHCI_F_SDH30
+ 
+ 	  If unsure, say N.
+ 
++config MMC_SDHCI_BFLB
++	tristate "SDHCI support on Bouffalo Lab BL808 SoC"
++	depends on MMC_SDHCI_PLTFM
++	depends on OF
++	depends on COMMON_CLK
++	select MMC_SDHCI_IO_ACCESSORS
++	help
++	  This selects the Secure Digital Host Controller Interface in
++	  Bouffalo Lab BL808 SoC.
++
++	  If you have a controller with this interface, say Y or M here.
++
++	  If unsure, say N.
++
+ config MMC_SDHCI_MILBEAUT
+ 	tristate "SDHCI support for Socionext Milbeaut Serieas using F_SDH30"
+ 	depends on MMC_SDHCI_PLTFM
+diff --git a/drivers/mmc/host/Makefile b/drivers/mmc/host/Makefile
+index ba0c6d0cd85d..626875dfb629 100644
+--- a/drivers/mmc/host/Makefile
++++ b/drivers/mmc/host/Makefile
+@@ -103,6 +103,7 @@ cqhci-y					+= cqhci-core.o
+ cqhci-$(CONFIG_MMC_CRYPTO)		+= cqhci-crypto.o
+ obj-$(CONFIG_MMC_HSQ)			+= mmc_hsq.o
+ obj-$(CONFIG_MMC_LITEX)			+= litex_mmc.o
++obj-$(CONFIG_MMC_SDHCI_BFLB)		+= sdhci-bflb.o
+ 
+ ifeq ($(CONFIG_CB710_DEBUG),y)
+ 	CFLAGS-cb710-mmc	+= -DDEBUG
+diff --git a/drivers/mmc/host/sdhci-bflb.c b/drivers/mmc/host/sdhci-bflb.c
+new file mode 100644
+index 000000000000..a67ecb2a380d
+--- /dev/null
++++ b/drivers/mmc/host/sdhci-bflb.c
+@@ -0,0 +1,117 @@
++// SPDX-License-Identifier: GPL-2.0-only
++
++#include <linux/clk.h>
++#include <linux/err.h>
++#include <linux/io.h>
++#include <linux/mmc/host.h>
++#include <linux/module.h>
++#include <linux/of.h>
++
++#include "sdhci-pltfm.h"
++
++static u16 sdhci_bflb_readw(struct sdhci_host *host, int reg)
++{
++	u16 ret;
++
++	switch (reg) {
++	case SDHCI_HOST_VERSION:
++	case SDHCI_SLOT_INT_STATUS:
++		/* those registers don't exist */
++		return 0;
++	default:
++		ret = readw(host->ioaddr + reg);
++	}
++	return ret;
++}
++
++static u32 sdhci_bflb_readl(struct sdhci_host *host, int reg)
++{
++	u32 ret;
++
++	ret = readl(host->ioaddr + reg);
++
++	switch (reg) {
++	case SDHCI_CAPABILITIES:
++		/* Mask the support for 3.0V */
++		ret &= ~SDHCI_CAN_VDD_300;
++		break;
++	}
++	return ret;
++}
++
++static const struct sdhci_ops sdhci_bflb_ops = {
++	.read_w	= sdhci_bflb_readw,
++	.read_l	= sdhci_bflb_readl,
++	.set_clock = sdhci_set_clock,
++	.get_max_clock = sdhci_pltfm_clk_get_max_clock,
++	.get_timeout_clock = sdhci_pltfm_clk_get_max_clock,
++	.set_bus_width = sdhci_set_bus_width,
++	.reset = sdhci_reset,
++	.set_uhs_signaling = sdhci_set_uhs_signaling,
++};
++
++static const struct sdhci_pltfm_data sdhci_bflb_pdata = {
++	.ops	= &sdhci_bflb_ops,
++	.quirks	= SDHCI_QUIRK_NO_SIMULT_VDD_AND_POWER |
++		  SDHCI_QUIRK_NO_BUSY_IRQ |
++		  SDHCI_QUIRK_BROKEN_TIMEOUT_VAL |
++		  SDHCI_QUIRK_NO_HISPD_BIT |
++		  SDHCI_QUIRK_BROKEN_CARD_DETECTION |
++		  SDHCI_QUIRK_BROKEN_DMA |
++		  SDHCI_QUIRK_BROKEN_ADMA |
++		  SDHCI_QUIRK_CAP_CLOCK_BASE_BROKEN,
++};
++
++static int sdhci_bflb_probe(struct platform_device *pdev)
++{
++	struct sdhci_host *host;
++	struct sdhci_pltfm_host *pltfm_host;
++	int ret;
++
++	host = sdhci_pltfm_init(pdev, &sdhci_bflb_pdata, 0);
++	if (IS_ERR(host))
++		return PTR_ERR(host);
++
++	pltfm_host = sdhci_priv(host);
++	pltfm_host->clk = devm_clk_get(&pdev->dev, NULL);
++
++	if (!IS_ERR(pltfm_host->clk))
++		clk_prepare_enable(pltfm_host->clk);
++
++	ret = mmc_of_parse(host->mmc);
++	if (ret)
++		goto err_sdhci_add;
++
++	ret = sdhci_add_host(host);
++	if (ret)
++		goto err_sdhci_add;
++
++	return 0;
++
++err_sdhci_add:
++	clk_disable_unprepare(pltfm_host->clk);
++	sdhci_pltfm_free(pdev);
++	return ret;
++}
++
++static const struct of_device_id sdhci_bflb_of_match_table[] = {
++	{ .compatible = "bouffalolab,bflb-sdhci", },
++	{}
++};
++MODULE_DEVICE_TABLE(of, sdhci_bflb_of_match_table);
++
++static struct platform_driver sdhci_bflb_driver = {
++	.driver		= {
++		.name	= "sdhci-bflb",
++		.probe_type = PROBE_PREFER_ASYNCHRONOUS,
++		.pm	= &sdhci_pltfm_pmops,
++		.of_match_table = sdhci_bflb_of_match_table,
++	},
++	.probe		= sdhci_bflb_probe,
++	.remove		= sdhci_pltfm_unregister,
++};
++
++module_platform_driver(sdhci_bflb_driver);
++
++MODULE_DESCRIPTION("SDHCI driver for Bflb");
++MODULE_LICENSE("GPL v2");
+-- 
+2.39.0
+

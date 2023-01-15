@@ -1,0 +1,33 @@
+From 4b71f54a5821e1ae0fac8c2a44e25123530c5e76 Mon Sep 17 00:00:00 2001
+From: Jisheng Zhang <jszhang@kernel.org>
+Date: Sun, 20 Nov 2022 16:21:10 +0800
+Subject: [PATCH 03/15] MAINTAINERS: add myself as a reviewer for Bouffalolab
+ uart driver
+
+I want to maintain this Bouffalolab uart driver from now on.
+
+Signed-off-by: Jisheng Zhang <jszhang@kernel.org>
+---
+ MAINTAINERS | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/MAINTAINERS b/MAINTAINERS
+index ea941dc469fa..dce6b97c4ed4 100644
+--- a/MAINTAINERS
++++ b/MAINTAINERS
+@@ -3785,6 +3785,12 @@ S:	Maintained
+ F:	Documentation/devicetree/bindings/iio/accel/bosch,bma400.yaml
+ F:	drivers/iio/accel/bma400*
+ 
++BOUFFALOLAB UART DRIVER
++M:	Jisheng Zhang <jszhang@kernel.org>
++S:	Maintained
++F:	Documentation/devicetree/bindings/serial/bouffalolab,uart.yaml
++F:	drivers/tty/serial/bflb_uart.c
++
+ BPF [GENERAL] (Safe Dynamic Programs and Tools)
+ M:	Alexei Starovoitov <ast@kernel.org>
+ M:	Daniel Borkmann <daniel@iogearbox.net>
+-- 
+2.39.0
+

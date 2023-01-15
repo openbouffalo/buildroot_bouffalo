@@ -1,0 +1,63 @@
+From d22d4a678ec3fb88015e458077de5e933d860513 Mon Sep 17 00:00:00 2001
+From: Jisheng Zhang <jszhang@kernel.org>
+Date: Sun, 20 Nov 2022 16:21:13 +0800
+Subject: [PATCH 06/15] riscv: dts: bouffalolab: add Sipeed M1S dock devicetree
+
+Sipeed manufactures a M1S system-on-module and dock board, add basic
+support for them.
+
+Signed-off-by: Jisheng Zhang <jszhang@kernel.org>
+---
+ arch/riscv/boot/dts/bouffalolab/Makefile      |  2 ++
+ .../boot/dts/bouffalolab/bl808-sipeed-m1s.dts | 30 +++++++++++++++++++
+ 2 files changed, 32 insertions(+)
+ create mode 100644 arch/riscv/boot/dts/bouffalolab/Makefile
+ create mode 100644 arch/riscv/boot/dts/bouffalolab/bl808-sipeed-m1s.dts
+
+diff --git a/arch/riscv/boot/dts/bouffalolab/Makefile b/arch/riscv/boot/dts/bouffalolab/Makefile
+new file mode 100644
+index 000000000000..42e17e1a97bd
+--- /dev/null
++++ b/arch/riscv/boot/dts/bouffalolab/Makefile
+@@ -0,0 +1,2 @@
++# SPDX-License-Identifier: GPL-2.0
++dtb-$(CONFIG_SOC_BOUFFALOLAB) += bl808-sipeed-m1s.dtb
+diff --git a/arch/riscv/boot/dts/bouffalolab/bl808-sipeed-m1s.dts b/arch/riscv/boot/dts/bouffalolab/bl808-sipeed-m1s.dts
+new file mode 100644
+index 000000000000..64421fb2ad67
+--- /dev/null
++++ b/arch/riscv/boot/dts/bouffalolab/bl808-sipeed-m1s.dts
+@@ -0,0 +1,30 @@
++// SPDX-License-Identifier: (GPL-2.0+ or MIT)
++/*
++ * Copyright (C) 2022 Jisheng Zhang <jszhang@kernel.org>
++ */
++
++/dts-v1/;
++
++#include "bl808.dtsi"
++
++/ {
++	model = "Sipeed M1S";
++	compatible = "sipeed,m1s", "bouffalolab,bl808";
++
++	aliases {
++		serial0 = &uart0;
++	};
++
++	chosen {
++		stdout-path = "serial0:2000000n8";
++	};
++
++	memory@50000000 {
++		device_type = "memory";
++		reg = <0x50000000 0x04000000>;
++	};
++};
++
++&uart0 {
++	status = "okay";
++};
+-- 
+2.39.0
+

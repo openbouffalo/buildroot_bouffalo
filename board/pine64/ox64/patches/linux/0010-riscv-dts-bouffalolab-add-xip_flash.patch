@@ -1,0 +1,37 @@
+From c32fe195358bd4ad3c0e9653432150393e7cbaed Mon Sep 17 00:00:00 2001
+From: Allen Martin <armartin@gmail.com>
+Date: Sun, 8 Jan 2023 02:26:04 -0800
+Subject: [PATCH 10/15] riscv: dts: bouffalolab: add xip_flash
+
+---
+ .../boot/dts/bouffalolab/bl808-sipeed-m1s.dts      | 14 ++++++++++++++
+ 1 file changed, 14 insertions(+)
+
+diff --git a/arch/riscv/boot/dts/bouffalolab/bl808-sipeed-m1s.dts b/arch/riscv/boot/dts/bouffalolab/bl808-sipeed-m1s.dts
+index 84e5aac6cbf8..bdb502ea5a54 100644
+--- a/arch/riscv/boot/dts/bouffalolab/bl808-sipeed-m1s.dts
++++ b/arch/riscv/boot/dts/bouffalolab/bl808-sipeed-m1s.dts
+@@ -26,6 +26,20 @@ memory@50000000 {
+ 		device_type = "memory";
+ 		reg = <0x50000000 0x04000000>;
+ 	};
++
++	xip_flash@58500000 {
++		compatible = "mtd-rom";
++		reg = <0x58500000 0x400000>;
++		linux,mtd-name = "xip-flash.0";
++		erase-size = <0x10000>;
++		bank-width = <4>;
++
++		rootfs@0 {
++			label = "rootfs";
++			reg = <0x00000 0x280000>;
++			read-only;
++		};
++	};
+ };
+ 
+ &uart0 {
+-- 
+2.39.0
+
