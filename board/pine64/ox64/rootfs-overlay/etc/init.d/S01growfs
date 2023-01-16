@@ -1,0 +1,44 @@
+#!/bin/sh
+
+
+start() {
+	if [ -f "/.growfsran" ]; then
+			echo "Root Partition Already resized"
+			return 1
+	fi
+	echo 'Resizing Rootfs'
+	growpart /dev/mmcblk0 2
+	status=$?
+	if [ "$status" -eq 0 ]; then
+			echo "Partition Resized"
+	else
+			echo "Partit Resize Failed"
+			return "$status"
+	fi
+	resize2fs /dev/mmcblk0p2
+	status=$?
+	if [ "$status" -eq 0 ]; then
+			echo "Rootfs Resized"
+	else
+			echo "rootfs Resize Failed"
+	fi
+	echo "Running mkswap"
+	mkswap /dev/mmcblk0p1
+	status=$?
+	if [ "$status" -eq 0 ]; then
+			swapon -a
+			echo "Swap Partition Formatted"
+	else
+			echo "Swap Partition Format Failed"
+	fi
+	touch /.growfsran
+	return "$status"
+}
+
+case "$1" in
+	start)
+		"$1";;
+	*)
+		echo "Usage: $0 {start}"
+		exit 1
+esac

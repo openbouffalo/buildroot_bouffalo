@@ -1,0 +1,7 @@
+config BR2_PACKAGE_CLOUDUTILS
+    bool "cloudutils"
+    depends on BR2_PACKAGE_UTIL_LINUX_PARTX
+    depends on BR2_PACKAGE_GPTFDISK_SGDISK
+    help
+      cloud-utils is a set of utilities for interacting with cloud images.
+      
