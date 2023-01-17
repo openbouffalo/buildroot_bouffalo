@@ -1,0 +1,125 @@
+From d0578027489b1e697a1910b7182d152a136c0a4e Mon Sep 17 00:00:00 2001
+From: Alexander Horner <33007665+alexhorner@users.noreply.github.com>
+Date: Sat, 14 Jan 2023 00:05:40 +0000
+Subject: [PATCH 17/26] UART2 working under Linux!
+
+---
+ arch/riscv/boot/dts/bouffalolab/Makefile      |  1 +
+ .../dts/bouffalolab/bl808-pine64-ox64.dts     | 60 +++++++++++++++++++
+ arch/riscv/boot/dts/bouffalolab/bl808.dtsi    | 13 +++-
+ include/dt-bindings/mailbox/bflb-ipc.h        |  1 +
+ 4 files changed, 74 insertions(+), 1 deletion(-)
+ create mode 100644 arch/riscv/boot/dts/bouffalolab/bl808-pine64-ox64.dts
+
+diff --git a/arch/riscv/boot/dts/bouffalolab/Makefile b/arch/riscv/boot/dts/bouffalolab/Makefile
+index 42e17e1a97bd..bc7aad3d5604 100644
+--- a/arch/riscv/boot/dts/bouffalolab/Makefile
++++ b/arch/riscv/boot/dts/bouffalolab/Makefile
+@@ -1,2 +1,3 @@
+ # SPDX-License-Identifier: GPL-2.0
+ dtb-$(CONFIG_SOC_BOUFFALOLAB) += bl808-sipeed-m1s.dtb
++dtb-$(CONFIG_SOC_BOUFFALOLAB) += bl808-pine64-ox64.dtb
+diff --git a/arch/riscv/boot/dts/bouffalolab/bl808-pine64-ox64.dts b/arch/riscv/boot/dts/bouffalolab/bl808-pine64-ox64.dts
+new file mode 100644
+index 000000000000..a3b1ae9f0478
+--- /dev/null
++++ b/arch/riscv/boot/dts/bouffalolab/bl808-pine64-ox64.dts
+@@ -0,0 +1,60 @@
++// SPDX-License-Identifier: (GPL-2.0+ or MIT)
++/*
++ * Copyright (C) 2022 Jisheng Zhang <jszhang@kernel.org>
++ */
++
++/dts-v1/;
++
++#include "bl808.dtsi"
++
++/ {
++	model = "Pine64 Ox64";
++	compatible = "sipeed,m1s", "bouffalolab,bl808";
++
++	aliases {
++		serial0 = &uart0;
++		serial1 = &uart1;
++	};
++
++	chosen {
++		stdout-path = "serial0:2000000n8";
++		bootargs = "console=ttyS0,2000000 loglevel=8 earlycon=sbi root=/dev/mtdblock0 ro rootfstype=squashfs";
++		linux,initrd-start = <0x0 0x52000000>;
++		linux,initrd-end = <0x0 0x52941784>;
++	};
++
++	memory@50000000 {
++		device_type = "memory";
++		reg = <0x50000000 0x04000000>;
++	};
++
++	xip_flash@58500000 {
++		compatible = "mtd-rom";
++		reg = <0x58500000 0x400000>;
++		linux,mtd-name = "xip-flash.0";
++		erase-size = <0x10000>;
++		bank-width = <4>;
++
++		rootfs@0 {
++			label = "rootfs";
++			reg = <0x00000 0x280000>;
++			read-only;
++		};
++	};
++};
++
++&uart0 {
++	status = "okay";
++};
++
++&uart1 {
++	status = "okay";
++};
++
++&sdhci0 {
++	status = "okay";
++};
++
++&ipclic {
++	status = "okay";
++};
+diff --git a/arch/riscv/boot/dts/bouffalolab/bl808.dtsi b/arch/riscv/boot/dts/bouffalolab/bl808.dtsi
+index 6f859194f82c..755071f80b59 100644
+--- a/arch/riscv/boot/dts/bouffalolab/bl808.dtsi
++++ b/arch/riscv/boot/dts/bouffalolab/bl808.dtsi
+@@ -60,7 +60,18 @@ uart0: serial@30002000 {
+ 			clocks = <&xtal>;
+ 			status = "disabled";
+ 		};
+-
++		
++		uart1: serial@0x2000AA00 {
++			compatible = "bouffalolab,uart";
++			reg = <0x2000AA00 0x0100>;
++			interrupts-extended = <&ipclic BFLB_IPC_SOURCE_M0
++								BFLB_IPC_DEVICE_UART2
++								IRQ_TYPE_EDGE_RISING>;
++			mboxes = <&ipclic BFLB_IPC_SOURCE_M0 BFLB_IPC_DEVICE_UART2>;
++			clocks = <&xtal>;
++			status = "disabled";
++		};
++		
+ 		sdhci0: sdhci@20060000 {
+ 			compatible = "bouffalolab,bflb-sdhci";
+ 			reg = <0x20060000 0x100>;
+diff --git a/include/dt-bindings/mailbox/bflb-ipc.h b/include/dt-bindings/mailbox/bflb-ipc.h
+index 1d4c4be6292e..e96fe62cbeb9 100644
+--- a/include/dt-bindings/mailbox/bflb-ipc.h
++++ b/include/dt-bindings/mailbox/bflb-ipc.h
+@@ -12,5 +12,6 @@
+ 
+ /* Peripheral device ID */
+ #define BFLB_IPC_DEVICE_SDHCI		0
++#define BFLB_IPC_DEVICE_UART2		1
+ 
+ #endif
+-- 
+2.25.1
+

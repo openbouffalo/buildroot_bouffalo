@@ -1,0 +1,29 @@
+From 0f81618bb5609e7e79b3afb454e269a1f50c9952 Mon Sep 17 00:00:00 2001
+From: Allen Martin <armartin@gmail.com>
+Date: Sun, 15 Jan 2023 01:07:35 -0800
+Subject: [PATCH 19/26] sdhci-bflb: enable additional quirks
+
+Write protect polarity is confirmed backwards, the other quirks
+may not be needed.
+---
+ drivers/mmc/host/sdhci-bflb.c | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/drivers/mmc/host/sdhci-bflb.c b/drivers/mmc/host/sdhci-bflb.c
+index c9141ddd7331..f6cc40dcf614 100644
+--- a/drivers/mmc/host/sdhci-bflb.c
++++ b/drivers/mmc/host/sdhci-bflb.c
+@@ -55,6 +55,10 @@ static const struct sdhci_pltfm_data sdhci_bflb_pdata = {
+ 	.quirks	= SDHCI_QUIRK_NO_SIMULT_VDD_AND_POWER |
+ 		  SDHCI_QUIRK_NO_BUSY_IRQ |
+ 		  SDHCI_QUIRK_BROKEN_TIMEOUT_VAL |
++		  SDHCI_QUIRK_BROKEN_DMA |
++		  SDHCI_QUIRK_BROKEN_ADMA |
++		  SDHCI_QUIRK_BROKEN_CARD_DETECTION |
++		  SDHCI_QUIRK_INVERTED_WRITE_PROTECT |
+ 		  SDHCI_QUIRK_NO_HISPD_BIT,
+ };
+ 
+-- 
+2.25.1
+
