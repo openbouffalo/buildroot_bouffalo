@@ -66,11 +66,12 @@ jobs:
             xz -z sdcard.img
             mv sdcard.img.xz sdcard-${{ matrix.target }}.img.xz
         fi
-        if [ -f Image ]; then
-            mv Image Image-${{ matrix.target }}
+        if [ -f Image.lz4 ]; then
+            mv Image.lz4 Image-${{ matrix.target }}.lz4
         fi
         echo "PACKAGE=${{ github.workspace }}/buildroot/output/images/sdcard-${{ matrix.target }}.img.xz" >> $GITHUB_ENV
-        echo "KERNEL=${{ github.workspace }}/buildroot/output/images/Image-${{ matrix.target }}" >> $GITHUB_ENV
+        echo "KERNEL=${{ github.workspace }}/buildroot/output/images/Image-${{ matrix.target }}.lz4" >> $GITHUB_ENV
+        echo "DTB=${{ github.workspace }}/buildroot/output/images/bl808-*.dtb" >> $GITHUB_ENV
     - name: Upload package
       uses: actions/upload-artifact@master
       with:
@@ -78,6 +79,7 @@ jobs:
         path: |
           ${{env.PACKAGE}}
           ${{env.KERNEL}}
+          ${{env.DTB}}
   lowload:
     runs-on: ubuntu-22.04
     if: github.event_name != 'pull_request'
@@ -173,7 +175,7 @@ jobs:
     steps:
     - name: install dependencies
       run: |
-        sudo apt-get install -y python3 lz4
+        sudo apt-get install -y python3
     - name: Checkout OpenBouffalo Buildroot
       uses: actions/checkout@v3
       with:
@@ -186,8 +188,6 @@ jobs:
     - name: Create images
       run: |
         cd ${{ github.workspace }}/build
-        lz4 -9 -f Image-${{ matrix.target }} Image.lz4
-        cp ${{ github.workspace }}/buildroot_bouffalo/board/pine64/ox64/bl808-pine64-ox64.dtb .
         ${{ github.workspace }}/buildroot_bouffalo/package/mergebin/mergebin.py
         mkdir firmware
         cp d0_lowload/build/build_out/*.bin firmware/

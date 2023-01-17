@@ -1,0 +1,41 @@
+From 3eda4a6ac2bc9909e6fbd9204df0fe5747342e51 Mon Sep 17 00:00:00 2001
+From: Alexander Horner <33007665+alexhorner@users.noreply.github.com>
+Date: Sun, 15 Jan 2023 13:38:26 +0000
+Subject: [PATCH 20/26] Disable flash rootfs for now, edit bootargs to use
+ SDHCI ext4 partition 1 rootfs
+
+---
+ arch/riscv/boot/dts/bouffalolab/bl808-pine64-ox64.dts | 8 ++++----
+ 1 file changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/arch/riscv/boot/dts/bouffalolab/bl808-pine64-ox64.dts b/arch/riscv/boot/dts/bouffalolab/bl808-pine64-ox64.dts
+index a3b1ae9f0478..d3d228c3d8c0 100644
+--- a/arch/riscv/boot/dts/bouffalolab/bl808-pine64-ox64.dts
++++ b/arch/riscv/boot/dts/bouffalolab/bl808-pine64-ox64.dts
+@@ -18,7 +18,7 @@ aliases {
+ 
+ 	chosen {
+ 		stdout-path = "serial0:2000000n8";
+-		bootargs = "console=ttyS0,2000000 loglevel=8 earlycon=sbi root=/dev/mtdblock0 ro rootfstype=squashfs";
++		bootargs = "console=ttyS0,2000000 loglevel=8 earlycon=sbi root=/dev/mmcblk0p2 rootwait rootfstype=ext4";
+ 		linux,initrd-start = <0x0 0x52000000>;
+ 		linux,initrd-end = <0x0 0x52941784>;
+ 	};
+@@ -35,11 +35,11 @@ xip_flash@58500000 {
+ 		erase-size = <0x10000>;
+ 		bank-width = <4>;
+ 
+-		rootfs@0 {
++		/*rootfs@0 {
+ 			label = "rootfs";
+-			reg = <0x00000 0x280000>;
++			reg = <0x00000 0x400000>;
+ 			read-only;
+-		};
++		};*/
+ 	};
+ };
+ 
+-- 
+2.25.1
+

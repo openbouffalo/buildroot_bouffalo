@@ -1,0 +1,39 @@
+From ffab227813189651186b3cf2cc568d365c0753d9 Mon Sep 17 00:00:00 2001
+From: Allen Martin <armartin@gmail.com>
+Date: Sat, 14 Jan 2023 17:59:13 -0800
+Subject: [PATCH 18/26] dts: bl808: add fake sdh clock at 96MHz
+
+---
+ arch/riscv/boot/dts/bouffalolab/bl808.dtsi | 9 ++++++++-
+ 1 file changed, 8 insertions(+), 1 deletion(-)
+
+diff --git a/arch/riscv/boot/dts/bouffalolab/bl808.dtsi b/arch/riscv/boot/dts/bouffalolab/bl808.dtsi
+index 755071f80b59..ecb285cd7763 100644
+--- a/arch/riscv/boot/dts/bouffalolab/bl808.dtsi
++++ b/arch/riscv/boot/dts/bouffalolab/bl808.dtsi
+@@ -45,6 +45,13 @@ xtal: xtal-clk {
+ 		#clock-cells = <0>;
+ 	};
+ 
++	sdh: sdh-clk {
++		compatible = "fixed-clock";
++		clock-frequency = <96000000>;
++		clock-output-names = "sdh";
++		#clock-cells = <0>;
++	};
++
+ 	soc {
+ 		compatible = "simple-bus";
+ 		ranges;
+@@ -79,7 +86,7 @@ sdhci0: sdhci@20060000 {
+ 						       BFLB_IPC_DEVICE_SDHCI
+ 						       IRQ_TYPE_EDGE_RISING>;
+ 			mboxes = <&ipclic BFLB_IPC_SOURCE_M0 BFLB_IPC_DEVICE_SDHCI>;
+-			clocks = <&xtal>;
++			clocks = <&sdh>;
+ 			status = "disabled";
+ 		};
+ 
+-- 
+2.25.1
+
