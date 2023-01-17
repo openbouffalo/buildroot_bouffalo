@@ -92,6 +92,7 @@ jobs:
       with:
         repository: bouffalolab/bl_mcu_sdk
         path: bl_mcu_sdk
+        ref: 9e189b69cbc0a75ffa170f600a28820848d56432
     - name: Checkout OpenBouffalo Firmware Repository
       uses: actions/checkout@v3
       with:
