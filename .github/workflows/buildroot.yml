@@ -189,6 +189,8 @@ jobs:
     - name: Create images
       run: |
         cd ${{ github.workspace }}/build
+        ls -lah 
+        mv Image-${{ matrix.target }}.lz4 Image.lz4
         ${{ github.workspace }}/buildroot_bouffalo/package/mergebin/mergebin.py
         mkdir firmware
         cp d0_lowload/build/build_out/*.bin firmware/
