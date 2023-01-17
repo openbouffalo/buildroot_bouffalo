@@ -1,0 +1,223 @@
+name: build-all
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+    paths-ignore:
+      - '.github/**'
+    tags:
+      - "v*.*.*"
+  pull_request:
+    branches: [ main ]
+    paths-ignore:
+      - '.github/**'
+   
+    
+jobs:
+  buildroot:
+    strategy:
+      fail-fast: true
+      matrix:
+        target: [ pine64_ox64_defconfig, pine64_ox64_full_defconfig ]
+    runs-on: ubuntu-22.04
+    steps:
+    - name: install dependencies
+      run: |
+        sudo apt-get install -y make gcc g++ unzip git bc python3 device-tree-compiler mtd-utils xz-utils
+    - name: Checkout Buildroot sources
+      uses: actions/checkout@v3
+      with:
+        repository: buildroot/buildroot
+        ref: 2022.08.3
+        path: buildroot
+    - name: Checkout OpenBouffalo Buildroot
+      uses: actions/checkout@v3
+      with:
+        path: buildroot_bouffalo
+    - name: buildroot target cache
+      id: br-output-cache
+      uses: actions/cache@v3
+      env:
+        cache-name: br-output-cache
+      with:
+        path: ${{ github.workspace }}/buildroot/output/images/
+        key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ matrix.target }}-${{ hashFiles(format('buildroot_bouffalo/configs/{0}', matrix.target), 'buildroot_bouffalo/board/pine64/ox64/**', 'buildroot_bouffalo/packages/**') }}
+    - name: buildroot download cache
+      if: steps.br-output-cache.outputs.cache-hit != 'true'
+      uses: actions/cache@v3
+      env:
+        cache-name: cache-download-files
+      with:
+        path: ${{ github.workspace }}/buildroot/dl/
+        key: ${{ runner.os }}-build-${{ env.cache-name }}-downloads
+    - name: Bulid
+      if: steps.br-output-cache.outputs.cache-hit != 'true'
+      run: |
+        export BR_BOUFFALO_OVERLAY_PATH=$(pwd)/buildroot_bouffalo
+        cd buildroot
+        make BR2_EXTERNAL=$BR_BOUFFALO_OVERLAY_PATH ${{ matrix.target }}
+        make
+    - name: Pack
+      run: |
+        cd ${{ github.workspace }}/buildroot/output/images/
+        ls -lah
+        if [ -f sdcard.img ]; then
+            xz -z sdcard.img
+            mv sdcard.img.xz sdcard-${{ matrix.target }}.img.xz
+        fi
+        if [ -f Image ]; then
+            mv Image Image-${{ matrix.target }}
+        fi
+        echo "PACKAGE=${{ github.workspace }}/buildroot/output/images/sdcard-${{ matrix.target }}.img.xz" >> $GITHUB_ENV
+        echo "KERNEL=${{ github.workspace }}/buildroot/output/images/Image-${{ matrix.target }}" >> $GITHUB_ENV
+    - name: Upload package
+      uses: actions/upload-artifact@master
+      with:
+        name: build artifacts
+        path: |
+          ${{env.PACKAGE}}
+          ${{env.KERNEL}}
+  lowload:
+    runs-on: ubuntu-22.04
+    if: github.event_name != 'pull_request'
+    steps:
+    - name: install dependencies
+      run: |
+        sudo apt-get install -y make gcc g++ cmake
+    - name: Checkout bl_mcu_sdk
+      uses: actions/checkout@v3
+      with:
+        repository: bouffalolab/bl_mcu_sdk
+        path: bl_mcu_sdk
+    - name: Checkout OpenBouffalo Firmware Repository
+      uses: actions/checkout@v3
+      with:
+        repository: openbouffalo/OBLFR
+        path: oblfr
+    - name: toolchain download cache
+      id: toolchain-cache
+      uses: actions/cache@v3
+      env:
+        cache-name: cache-toolchain-files
+      with:
+        path: ${{ github.workspace }}/toolchain_gcc_t-head_linux/
+        key: ${{ runner.os }}-build-${{ env.cache-name }}
+    - name: Download Toolchain
+      if: steps.toolchain-cache.outputs.cache-hit != 'true'
+      run: |
+        git clone https://gitee.com/bouffalolab/toolchain_gcc_t-head_linux.git
+    - name: Compile Firmware
+      run: | 
+        PATH=$PATH:${{ github.workspace }}/toolchain_gcc_t-head_linux/bin/
+        cd ${{ github.workspace }}/oblfr/apps/d0_lowload
+        make
+        echo "D0LOWLOAD=${{ github.workspace }}/oblfr/apps/d0_lowload/build/build_out/d0_lowload_bl808_d0.bin" >> $GITHUB_ENV
+        cd ${{ github.workspace }}/oblfr/apps/m0_lowload
+        make
+        echo "M0LOWLOAD=${{ github.workspace }}/oblfr/apps/m0_lowload/build/build_out/m0_lowload_bl808_m0.bin" >> $GITHUB_ENV
+    - name: Upload Firmware
+      uses: actions/upload-artifact@master
+      with:
+        name: build artifacts
+        path: |
+          ${{env.D0LOWLOAD}}
+          ${{env.M0LOWLOAD}}
+  opensbi:
+    runs-on: ubuntu-22.04
+    if: github.event_name != 'pull_request'
+    steps:
+    - name: install dependencies
+      run: |
+        sudo apt-get install -y make gcc g++ cmake
+    - name: Checkout bl808_linux
+      uses: actions/checkout@v3
+      with:
+        repository: bouffalolab/bl808_linux
+        path: bl808_linux
+    - name: toolchain download cache
+      id: toolchain-cache
+      uses: actions/cache@v3
+      env:
+        cache-name: cache-toolchain-files
+      with:
+        path: ${{ github.workspace }}/bl808_linux/toolchain/
+        key: ${{ runner.os }}-build-${{ env.cache-name }}
+    - name: Download Toolchain
+      if: steps.toolchain-cache.outputs.cache-hit != 'true'
+      run: |
+        cd ${{ github.workspace }}/bl808_linux
+        mkdir -p toolchain/elf_newlib_toolchain toolchain/linux_toolchain
+        curl https://occ-oss-prod.oss-cn-hangzhou.aliyuncs.com/resource//1663142243961/Xuantie-900-gcc-elf-newlib-x86_64-V2.6.1-20220906.tar.gz | tar xz -C toolchain/elf_newlib_toolchain/ --strip-components=1
+        curl https://occ-oss-prod.oss-cn-hangzhou.aliyuncs.com/resource//1663142514282/Xuantie-900-gcc-linux-5.10.4-glibc-x86_64-V2.6.1-20220906.tar.gz | tar xz -C toolchain/linux_toolchain/ --strip-components=1
+    - name: Compile OpenSBI
+      run: |
+        cd ${{ github.workspace }}/bl808_linux
+        ./switch_to_m1sdock.sh
+        ./build.sh opensbi
+        echo "OPENSBI=${{ github.workspace }}/bl808_linux/out/fw_jump.bin" >> $GITHUB_ENV
+    - name: Upload OpenSBI
+      uses: actions/upload-artifact@master
+      with:
+        name: build artifacts
+        path: |
+          ${{env.OPENSBI}}
+  createimages:
+    if: github.event_name != 'pull_request'
+    strategy:
+      fail-fast: true
+      matrix:
+        target: [ pine64_ox64_defconfig, pine64_ox64_full_defconfig ]
+    runs-on: ubuntu-22.04
+    needs: [buildroot, lowload, opensbi]
+    steps:
+    - name: install dependencies
+      run: |
+        sudo apt-get install -y python3 lz4
+    - name: Checkout OpenBouffalo Buildroot
+      uses: actions/checkout@v3
+      with:
+        path: buildroot_bouffalo
+    - name: Download build files
+      uses: actions/download-artifact@v3
+      with:
+        name: build artifacts
+        path: ${{ github.workspace }}/build
+    - name: Create images
+      run: |
+        cd ${{ github.workspace }}/build
+        lz4 -9 -f Image-${{ matrix.target }} Image.lz4
+        cp ${{ github.workspace }}/buildroot_bouffalo/board/pine64/ox64/bl808-pine64-ox64.dtb .
+        ${{ github.workspace }}/buildroot_bouffalo/package/mergebin/mergebin.py
+        mkdir firmware
+        cp d0_lowload/build/build_out/*.bin firmware/
+        cp m0_lowload/build/build_out/*.bin firmware/
+        cp whole_img_linux.bin firmware/
+        cp sdcard-${{ matrix.target }}.img.xz firmware/
+        tar -czvf bl808-linux-${{ matrix.target }}.tar.gz firmware
+        echo "FIRMWARE=${{ github.workspace }}/build/bl808-linux-${{ matrix.target }}.tar.gz" >> $GITHUB_ENV
+    - name: Upload Firmware
+      uses: actions/upload-artifact@master
+      with:
+        name: linux-buildroot-${{ matrix.target }}
+        path: |
+          ${{env.FIRMWARE}}        
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-22.04
+    needs: [createimages]
+    permissions: write-all
+    steps:
+      - name: download firmware
+        uses: actions/download-artifact@v3
+      - name: Create images
+        run: |
+          ls -lah
+          ls -lah linux-buildroot-*/*.tar.gz
+      - name: publish artifacts
+        uses: softprops/action-gh-release@v1
+        with:
+          append_body: true
+          files: |
+            linux-buildroot-*/*.tar.gz

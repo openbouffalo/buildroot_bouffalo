@@ -1,0 +1,60 @@
+// SPDX-License-Identifier: (GPL-2.0+ or MIT)
+/*
+ * Copyright (C) 2022 Jisheng Zhang <jszhang@kernel.org>
+ */
+
+/dts-v1/;
+
+#include "bl808.dtsi"
+
+/ {
+	model = "Pine64 Ox64";
+	compatible = "sipeed,m1s", "bouffalolab,bl808";
+
+	aliases {
+		serial0 = &uart0;
+		serial1 = &uart1;
+	};
+
+	chosen {
+		stdout-path = "serial0:2000000n8";
+		bootargs = "console=ttyS0,2000000 loglevel=8 earlycon=sbi root=/dev/mmcblk0p2 rootwait rootfstype=ext4";
+		linux,initrd-start = <0x0 0x52000000>;
+		linux,initrd-end = <0x0 0x52941784>;
+	};
+
+	memory@50000000 {
+		device_type = "memory";
+		reg = <0x50000000 0x04000000>;
+	};
+
+	xip_flash@58500000 {
+		compatible = "mtd-rom";
+		reg = <0x58500000 0x400000>;
+		linux,mtd-name = "xip-flash.0";
+		erase-size = <0x10000>;
+		bank-width = <4>;
+
+		/*rootfs@0 {
+			label = "rootfs";
+			reg = <0x00000 0x400000>;
+			read-only;
+		};*/
+	};
+};
+
+&uart0 {
+	status = "okay";
+};
+
+&uart1 {
+	status = "okay";
+};
+
+&sdhci0 {
+	status = "okay";
+};
+
+&ipclic {
+	status = "okay";
+};
