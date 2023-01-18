@@ -66,8 +66,8 @@ jobs:
             xz -z sdcard.img
             mv sdcard.img.xz sdcard-${{ matrix.target }}.img.xz
         fi
-        if [ -f Image.lz4 ]; then
-            mv Image.lz4 Image-${{ matrix.target }}.lz4
+        if [ -f Image ]; then
+            lz4 -9 -f Image Image-${{ matrix.target }}.lz4
         fi
         echo "PACKAGE=${{ github.workspace }}/buildroot/output/images/sdcard-${{ matrix.target }}.img.xz" >> $GITHUB_ENV
         echo "KERNEL=${{ github.workspace }}/buildroot/output/images/Image-${{ matrix.target }}.lz4" >> $GITHUB_ENV
@@ -92,7 +92,7 @@ jobs:
       with:
         repository: bouffalolab/bl_mcu_sdk
         path: bl_mcu_sdk
-        ref: 9e189b69cbc0a75ffa170f600a28820848d56432
+        ref: 356f258e83cf9f39598c593710dd95e31c0627e7
     - name: Checkout OpenBouffalo Firmware Repository
       uses: actions/checkout@v3
       with:
