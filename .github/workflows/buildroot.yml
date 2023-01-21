@@ -72,6 +72,7 @@ jobs:
         echo "PACKAGE=${{ github.workspace }}/buildroot/output/images/sdcard-${{ matrix.target }}.img.xz" >> $GITHUB_ENV
         echo "KERNEL=${{ github.workspace }}/buildroot/output/images/Image-${{ matrix.target }}.lz4" >> $GITHUB_ENV
         echo "DTB=${{ github.workspace }}/buildroot/output/images/bl808-*.dtb" >> $GITHUB_ENV
+        echo "OPENSBI=${{ github.workspace }}/buildroot/output/images/fw_jump.bin" >> $GITHUB_ENV
     - name: Upload package
       uses: actions/upload-artifact@master
       with:
@@ -80,6 +81,7 @@ jobs:
           ${{env.PACKAGE}}
           ${{env.KERNEL}}
           ${{env.DTB}}
+          ${{env.OPENSBI}}
   lowload:
     runs-on: ubuntu-22.04
     if: github.event_name != 'pull_request'
@@ -126,45 +128,6 @@ jobs:
         path: |
           ${{env.D0LOWLOAD}}
           ${{env.M0LOWLOAD}}
-  opensbi:
-    runs-on: ubuntu-22.04
-    if: github.event_name != 'pull_request'
-    steps:
-    - name: install dependencies
-      run: |
-        sudo apt-get install -y make gcc g++ cmake
-    - name: Checkout bl808_linux
-      uses: actions/checkout@v3
-      with:
-        repository: bouffalolab/bl808_linux
-        path: bl808_linux
-    - name: toolchain download cache
-      id: toolchain-cache
-      uses: actions/cache@v3
-      env:
-        cache-name: cache-toolchain-files
-      with:
-        path: ${{ github.workspace }}/bl808_linux/toolchain/
-        key: ${{ runner.os }}-build-${{ env.cache-name }}
-    - name: Download Toolchain
-      if: steps.toolchain-cache.outputs.cache-hit != 'true'
-      run: |
-        cd ${{ github.workspace }}/bl808_linux
-        mkdir -p toolchain/elf_newlib_toolchain toolchain/linux_toolchain
-        curl https://occ-oss-prod.oss-cn-hangzhou.aliyuncs.com/resource//1663142243961/Xuantie-900-gcc-elf-newlib-x86_64-V2.6.1-20220906.tar.gz | tar xz -C toolchain/elf_newlib_toolchain/ --strip-components=1
-        curl https://occ-oss-prod.oss-cn-hangzhou.aliyuncs.com/resource//1663142514282/Xuantie-900-gcc-linux-5.10.4-glibc-x86_64-V2.6.1-20220906.tar.gz | tar xz -C toolchain/linux_toolchain/ --strip-components=1
-    - name: Compile OpenSBI
-      run: |
-        cd ${{ github.workspace }}/bl808_linux
-        ./switch_to_m1sdock.sh
-        ./build.sh opensbi
-        echo "OPENSBI=${{ github.workspace }}/bl808_linux/out/fw_jump.bin" >> $GITHUB_ENV
-    - name: Upload OpenSBI
-      uses: actions/upload-artifact@master
-      with:
-        name: build artifacts
-        path: |
-          ${{env.OPENSBI}}
   createimages:
     if: github.event_name != 'pull_request'
     strategy:
@@ -172,7 +135,7 @@ jobs:
       matrix:
         target: [ pine64_ox64_defconfig, pine64_ox64_full_defconfig ]
     runs-on: ubuntu-22.04
-    needs: [buildroot, lowload, opensbi]
+    needs: [buildroot, lowload]
     steps:
     - name: install dependencies
       run: |
