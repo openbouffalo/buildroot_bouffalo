@@ -12,7 +12,11 @@ on:
     branches: [ main ]
     paths-ignore:
       - '.github/**'
-   
+
+env:
+  bl_mcu_sdk_version: 356f258e83cf9f39598c593710dd95e31c0627e7
+  oblfr_version: v0.0.2
+
     
 jobs:
   buildroot:
@@ -94,12 +98,13 @@ jobs:
       with:
         repository: bouffalolab/bl_mcu_sdk
         path: bl_mcu_sdk
-        ref: 356f258e83cf9f39598c593710dd95e31c0627e7
+        ref: ${{ env.bl_mcu_sdk_version }}
     - name: Checkout OpenBouffalo Firmware Repository
       uses: actions/checkout@v3
       with:
         repository: openbouffalo/OBLFR
         path: oblfr
+        ref: ${{ env.oblfr_version }}
     - name: toolchain download cache
       id: toolchain-cache
       uses: actions/cache@v3
