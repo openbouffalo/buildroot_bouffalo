@@ -1,0 +1,153 @@
+From e1302246650878f35ad15566e5b0772598014601 Mon Sep 17 00:00:00 2001
+From: Justin Hammond <justin@dynam.ac>
+Date: Fri, 20 Jan 2023 13:45:52 +0800
+Subject: [PATCH 1/2] Rename DTS Files
+
+---
+ arch/riscv/boot/dts/bouffalolab/bl808-pine64-ox64.dts |  8 +-------
+ arch/riscv/boot/dts/bouffalolab/bl808-sipeed-m1s.dts  |  2 +-
+ arch/riscv/boot/dts/bouffalolab/bl808.dtsi            | 10 +++++-----
+ drivers/mailbox/bflb-ipc.c                            |  2 +-
+ drivers/mmc/host/sdhci-bflb.c                         |  2 +-
+ drivers/tty/serial/bflb_uart.c                        |  4 ++--
+ 6 files changed, 11 insertions(+), 17 deletions(-)
+
+diff --git a/arch/riscv/boot/dts/bouffalolab/bl808-pine64-ox64.dts b/arch/riscv/boot/dts/bouffalolab/bl808-pine64-ox64.dts
+index 66a892f880c7..eede26e4f043 100644
+--- a/arch/riscv/boot/dts/bouffalolab/bl808-pine64-ox64.dts
++++ b/arch/riscv/boot/dts/bouffalolab/bl808-pine64-ox64.dts
+@@ -9,7 +9,7 @@
+ 
+ / {
+ 	model = "Pine64 Ox64";
+-	compatible = "sipeed,m1s", "bouffalolab,bl808";
++	compatible = "sipeed,m1s", "bflb,bl808";
+ 
+ 	aliases {
+ 		serial0 = &uart0;
+@@ -34,12 +34,6 @@ xip_flash@58500000 {
+ 		linux,mtd-name = "xip-flash.0";
+ 		erase-size = <0x10000>;
+ 		bank-width = <4>;
+-
+-		/*rootfs@0 {
+-			label = "rootfs";
+-			reg = <0x00000 0x400000>;
+-			read-only;
+-		};*/
+ 	};
+ };
+ 
+diff --git a/arch/riscv/boot/dts/bouffalolab/bl808-sipeed-m1s.dts b/arch/riscv/boot/dts/bouffalolab/bl808-sipeed-m1s.dts
+index 19155bcc2693..ed2d18482920 100644
+--- a/arch/riscv/boot/dts/bouffalolab/bl808-sipeed-m1s.dts
++++ b/arch/riscv/boot/dts/bouffalolab/bl808-sipeed-m1s.dts
+@@ -9,7 +9,7 @@
+ 
+ / {
+ 	model = "Sipeed M1S";
+-	compatible = "sipeed,m1s", "bouffalolab,bl808";
++	compatible = "sipeed,m1s", "bflb,bl808";
+ 
+ 	aliases {
+ 		serial0 = &uart0;
+diff --git a/arch/riscv/boot/dts/bouffalolab/bl808.dtsi b/arch/riscv/boot/dts/bouffalolab/bl808.dtsi
+index 5e90f3ee04d7..bdfed1bde043 100644
+--- a/arch/riscv/boot/dts/bouffalolab/bl808.dtsi
++++ b/arch/riscv/boot/dts/bouffalolab/bl808.dtsi
+@@ -7,7 +7,7 @@
+ #include <dt-bindings/mailbox/bflb-ipc.h>
+ 
+ / {
+-	compatible = "bouffalolab,bl808";
++	compatible = "bflb,bl808";
+ 	#address-cells = <1>;
+ 	#size-cells = <1>;
+ 
+@@ -61,7 +61,7 @@ soc {
+ 		#size-cells = <1>;
+ 
+ 		uart0: serial@30002000 {
+-			compatible = "bouffalolab,uart";
++			compatible = "bflb,bl808-uart";
+ 			reg = <0x30002000 0x1000>;
+ 			interrupts = <20 IRQ_TYPE_LEVEL_HIGH>;
+ 			clocks = <&xtal>;
+@@ -69,7 +69,7 @@ uart0: serial@30002000 {
+ 		};
+ 		
+ 		uart1: serial@0x2000AA00 {
+-			compatible = "bouffalolab,uart";
++			compatible = "bflb,bl808-uart";
+ 			reg = <0x2000AA00 0x0100>;
+ 			interrupts-extended = <&ipclic BFLB_IPC_SOURCE_M0
+ 								BFLB_IPC_DEVICE_UART2
+@@ -80,7 +80,7 @@ BFLB_IPC_DEVICE_UART2
+ 		};
+ 		
+ 		sdhci0: sdhci@20060000 {
+-			compatible = "bouffalolab,bflb-sdhci";
++			compatible = "bflb,bl808-sdhci";
+ 			reg = <0x20060000 0x100>;
+ 			interrupts-extended = <&ipclic BFLB_IPC_SOURCE_M0
+ 						       BFLB_IPC_DEVICE_SDHCI
+@@ -101,7 +101,7 @@ BFLB_IPC_DEVICE_USB
+ 		};
+ 
+ 		ipclic: mailbox@30005000 {
+-			compatible = "bouffalolab,bflb-ipc";
++			compatible = "bflb,bl808-ipc";
+ 			reg = <0x30005000 0x20>,
+ 			      <0x30005020 0x20>,
+ 			      <0x2000a800 0x20>,
+diff --git a/drivers/mailbox/bflb-ipc.c b/drivers/mailbox/bflb-ipc.c
+index 692dd20e35a8..06020cec3cba 100644
+--- a/drivers/mailbox/bflb-ipc.c
++++ b/drivers/mailbox/bflb-ipc.c
+@@ -350,7 +350,7 @@ static int bflb_ipc_remove(struct platform_device *pdev)
+ }
+ 
+ static const struct of_device_id bflb_ipc_of_match[] = {
+-	{ .compatible = "bouffalolab,bflb-ipc"},
++	{ .compatible = "bflb,bl808-ipc"},
+ 	{}
+ };
+ MODULE_DEVICE_TABLE(of, bflb_ipc_of_match);
+diff --git a/drivers/mmc/host/sdhci-bflb.c b/drivers/mmc/host/sdhci-bflb.c
+index f6cc40dcf614..aacf234387af 100644
+--- a/drivers/mmc/host/sdhci-bflb.c
++++ b/drivers/mmc/host/sdhci-bflb.c
+@@ -95,7 +95,7 @@ static int sdhci_bflb_probe(struct platform_device *pdev)
+ }
+ 
+ static const struct of_device_id sdhci_bflb_of_match_table[] = {
+-	{ .compatible = "bouffalolab,bflb-sdhci", },
++	{ .compatible = "bflb,bl808-sdhci", },
+ 	{}
+ };
+ MODULE_DEVICE_TABLE(of, sdhci_bflb_of_match_table);
+diff --git a/drivers/tty/serial/bflb_uart.c b/drivers/tty/serial/bflb_uart.c
+index 65f98ccf8fa8..b091ad7a891a 100644
+--- a/drivers/tty/serial/bflb_uart.c
++++ b/drivers/tty/serial/bflb_uart.c
+@@ -538,7 +538,7 @@ static int __init bflb_uart_earlycon_setup(struct earlycon_device *dev,
+ 
+ 	return 0;
+ }
+-OF_EARLYCON_DECLARE(bflb_uart, "bouffalolab,uart", bflb_uart_earlycon_setup);
++OF_EARLYCON_DECLARE(bflb_uart, "bflb,bl808-uart", bflb_uart_earlycon_setup);
+ 
+ #else
+ 
+@@ -615,7 +615,7 @@ static int bflb_uart_remove(struct platform_device *pdev)
+ 
+ static const struct of_device_id bflb_uart_match[] = {
+ 	{
+-		.compatible = "bouffalolab,uart",
++		.compatible = "bflb,bl808-uart",
+ 	},
+ 	{},
+ };
+-- 
+2.25.1
+
