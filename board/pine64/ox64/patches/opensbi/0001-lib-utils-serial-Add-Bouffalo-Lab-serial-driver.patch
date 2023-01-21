@@ -1,0 +1,234 @@
+From 1767f7f5473b608cf8cfc66c5799a8f61c72c16d Mon Sep 17 00:00:00 2001
+From: Samuel Holland <samuel@sholland.org>
+Date: Sat, 17 Dec 2022 15:58:16 -0600
+Subject: [PATCH] lib: utils: serial: Add Bouffalo Lab serial driver
+
+Signed-off-by: Samuel Holland <samuel@sholland.org>
+---
+ include/sbi_utils/serial/bflb-uart.h | 12 ++++
+ lib/utils/serial/Kconfig             |  9 +++
+ lib/utils/serial/bflb-uart.c         | 92 ++++++++++++++++++++++++++++
+ lib/utils/serial/fdt_serial_bflb.c   | 30 +++++++++
+ lib/utils/serial/objects.mk          |  4 ++
+ platform/generic/configs/defconfig   |  1 +
+ 6 files changed, 148 insertions(+)
+ create mode 100644 include/sbi_utils/serial/bflb-uart.h
+ create mode 100644 lib/utils/serial/bflb-uart.c
+ create mode 100644 lib/utils/serial/fdt_serial_bflb.c
+
+diff --git a/include/sbi_utils/serial/bflb-uart.h b/include/sbi_utils/serial/bflb-uart.h
+new file mode 100644
+index 0000000..ee8b717
+--- /dev/null
++++ b/include/sbi_utils/serial/bflb-uart.h
+@@ -0,0 +1,12 @@
++/*
++ * SPDX-License-Identifier: BSD-2-Clause
++ */
++
++#ifndef __SERIAL_BFLB_UART_H__
++#define __SERIAL_BFLB_UART_H__
++
++#include <sbi/sbi_types.h>
++
++int bflb_uart_init(unsigned long base, u32 in_freq, u32 baudrate);
++
++#endif
+diff --git a/lib/utils/serial/Kconfig b/lib/utils/serial/Kconfig
+index e3589ca..7daae01 100644
+--- a/lib/utils/serial/Kconfig
++++ b/lib/utils/serial/Kconfig
+@@ -9,6 +9,11 @@ config FDT_SERIAL
+ 
+ if FDT_SERIAL
+ 
++config FDT_SERIAL_BFLB
++	bool "Bouffalo Lab UART FDT driver"
++	select SERIAL_BFLB
++	default n
++
+ config FDT_SERIAL_CADENCE
+ 	bool "Cadence UART FDT driver"
+ 	select SERIAL_CADENCE
+@@ -56,6 +61,10 @@ config FDT_SERIAL_XILINX_UARTLITE
+ 
+ endif
+ 
++config SERIAL_BFLB
++	bool "Bouffalo Lab UART support"
++	default n
++
+ config SERIAL_CADENCE
+ 	bool "Cadence UART support"
+ 	default n
+diff --git a/lib/utils/serial/bflb-uart.c b/lib/utils/serial/bflb-uart.c
+new file mode 100644
+index 0000000..3191471
+--- /dev/null
++++ b/lib/utils/serial/bflb-uart.c
+@@ -0,0 +1,92 @@
++/*
++ * SPDX-License-Identifier: BSD-2-Clause
++ */
++
++#include <sbi/riscv_io.h>
++#include <sbi/sbi_bitops.h>
++#include <sbi/sbi_console.h>
++#include <sbi_utils/serial/bflb-uart.h>
++
++#define UART_TX_CFG			0x00
++#define UART_TX_CFG_TX_BIT_CNT_P		GENMASK(12, 11)
++#define UART_TX_CFG_TX_BIT_CNT_D		GENMASK(10,  8)
++#define UART_TX_CFG_TX_FRM_EN			BIT(2)
++#define UART_TX_CFG_TX_EN			BIT(0)
++#define UART_RX_CFG			0x04
++#define UART_RX_CFG_RX_BIT_CNT_D		GENMASK(10,  8)
++#define UART_RX_CFG_RX_EN			BIT(0)
++#define UART_BIT_PRD			0x08
++#define UART_BIT_PRD_RX_BIT_PRD			GENMASK(31, 16)
++#define UART_BIT_PRD_TX_BIT_PRD			GENMASK(15,  0)
++#define UART_FIFO_CFG1			0x84
++#define UART_FIFO_CFG1_RX_FIFO_CNT		GENMASK(13,  8)
++#define UART_FIFO_CFG1_TX_FIFO_CNT		GENMASK( 5,  0)
++#define UART_FIFO_WDATA			0x88
++#define UART_FIFO_RDATA			0x8c
++
++static volatile void *uart_base;
++
++static int bflb_uart_rx_avail(void)
++{
++	u32 val = readl(uart_base + UART_FIFO_CFG1);
++
++	return EXTRACT_FIELD(val, UART_FIFO_CFG1_RX_FIFO_CNT);
++}
++
++static int bflb_uart_tx_avail(void)
++{
++	u32 val = readl(uart_base + UART_FIFO_CFG1);
++
++	return EXTRACT_FIELD(val, UART_FIFO_CFG1_TX_FIFO_CNT);
++}
++
++static void bflb_uart_putc(char ch)
++{
++	while (!bflb_uart_tx_avail())
++		;
++
++	writel(ch, uart_base + UART_FIFO_WDATA);
++}
++
++static int bflb_uart_getc(void)
++{
++	if (!bflb_uart_rx_avail())
++		return -1;
++
++	return readl(uart_base + UART_FIFO_RDATA);
++}
++
++static struct sbi_console_device bflb_console = {
++	.name = "bflb_uart",
++	.console_putc = bflb_uart_putc,
++	.console_getc = bflb_uart_getc
++};
++
++int bflb_uart_init(unsigned long base, u32 in_freq, u32 baudrate)
++{
++	u32 val;
++
++	uart_base = (volatile void *)base;
++
++	val = INSERT_FIELD(0, UART_TX_CFG_TX_BIT_CNT_P, 2) |
++	      INSERT_FIELD(0, UART_TX_CFG_TX_BIT_CNT_D, 7) |
++	      UART_TX_CFG_TX_FRM_EN |
++	      UART_TX_CFG_TX_EN;
++	writel(val, uart_base + UART_TX_CFG);
++
++	val = INSERT_FIELD(0, UART_RX_CFG_RX_BIT_CNT_D, 7) |
++	      UART_RX_CFG_RX_EN;
++	writel(val, uart_base + UART_RX_CFG);
++
++	if (in_freq >= baudrate) {
++		u32 period = in_freq / baudrate - 1;
++
++		val = INSERT_FIELD(0, UART_BIT_PRD_RX_BIT_PRD, period) |
++		      INSERT_FIELD(0, UART_BIT_PRD_TX_BIT_PRD, period);
++		writel(val, uart_base + UART_BIT_PRD);
++	}
++
++	sbi_console_set_device(&bflb_console);
++
++	return 0;
++}
+diff --git a/lib/utils/serial/fdt_serial_bflb.c b/lib/utils/serial/fdt_serial_bflb.c
+new file mode 100644
+index 0000000..0c40058
+--- /dev/null
++++ b/lib/utils/serial/fdt_serial_bflb.c
+@@ -0,0 +1,30 @@
++/*
++ * SPDX-License-Identifier: BSD-2-Clause
++ */
++
++#include <sbi_utils/fdt/fdt_helper.h>
++#include <sbi_utils/serial/fdt_serial.h>
++#include <sbi_utils/serial/bflb-uart.h>
++
++static int serial_bflb_init(void *fdt, int nodeoff,
++			    const struct fdt_match *match)
++{
++	struct platform_uart_data uart = { 0 };
++	int rc;
++
++	rc = fdt_parse_uart_node(fdt, nodeoff, &uart);
++	if (rc)
++		return rc;
++
++	return bflb_uart_init(uart.addr, uart.freq, uart.baud);
++}
++
++static const struct fdt_match serial_bflb_match[] = {
++	{ .compatible = "bflb,bl808-uart" },
++	{ }
++};
++
++struct fdt_serial fdt_serial_bflb = {
++	.match_table = serial_bflb_match,
++	.init = serial_bflb_init
++};
+diff --git a/lib/utils/serial/objects.mk b/lib/utils/serial/objects.mk
+index 1e6bd2e..1c24b1a 100644
+--- a/lib/utils/serial/objects.mk
++++ b/lib/utils/serial/objects.mk
+@@ -10,6 +10,9 @@
+ libsbiutils-objs-$(CONFIG_FDT_SERIAL) += serial/fdt_serial.o
+ libsbiutils-objs-$(CONFIG_FDT_SERIAL) += serial/fdt_serial_drivers.o
+ 
++carray-fdt_serial_drivers-$(CONFIG_FDT_SERIAL_BFLB) += fdt_serial_bflb
++libsbiutils-objs-$(CONFIG_FDT_SERIAL_BFLB) += serial/fdt_serial_bflb.o
++
+ carray-fdt_serial_drivers-$(CONFIG_FDT_SERIAL_CADENCE) += fdt_serial_cadence
+ libsbiutils-objs-$(CONFIG_FDT_SERIAL_CADENCE) += serial/fdt_serial_cadence.o
+ 
+@@ -37,6 +40,7 @@ libsbiutils-objs-$(CONFIG_FDT_SERIAL_UART8250) += serial/fdt_serial_uart8250.o
+ carray-fdt_serial_drivers-$(CONFIG_FDT_SERIAL_XILINX_UARTLITE) += fdt_serial_xlnx_uartlite
+ libsbiutils-objs-$(CONFIG_FDT_SERIAL_XILINX_UARTLITE) += serial/fdt_serial_xlnx_uartlite.o
+ 
++libsbiutils-objs-$(CONFIG_SERIAL_BFLB) += serial/bflb-uart.o
+ libsbiutils-objs-$(CONFIG_SERIAL_CADENCE) += serial/cadence-uart.o
+ libsbiutils-objs-$(CONFIG_SERIAL_GAISLER) += serial/gaisler-uart.o
+ libsbiutils-objs-$(CONFIG_SERIAL_RENESAS_SCIF) += serial/renesas_scif.o
+diff --git a/platform/generic/configs/defconfig b/platform/generic/configs/defconfig
+index 4b0842e..c8ba768 100644
+--- a/platform/generic/configs/defconfig
++++ b/platform/generic/configs/defconfig
+@@ -23,6 +23,7 @@ CONFIG_FDT_RESET_SIFIVE_TEST=y
+ CONFIG_FDT_RESET_SUNXI_WDT=y
+ CONFIG_FDT_RESET_THEAD=y
+ CONFIG_FDT_SERIAL=y
++CONFIG_FDT_SERIAL_BFLB=y
+ CONFIG_FDT_SERIAL_CADENCE=y
+ CONFIG_FDT_SERIAL_GAISLER=y
+ CONFIG_FDT_SERIAL_HTIF=y
+-- 
+2.25.1
+

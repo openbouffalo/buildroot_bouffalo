@@ -1,0 +1,30 @@
+From 940a1d34d8acd02dcd8fd79030e95c1a8e04dec6 Mon Sep 17 00:00:00 2001
+From: Justin Hammond <justin@dynam.ac>
+Date: Sat, 21 Jan 2023 14:32:56 +0800
+Subject: [PATCH] add timer node to dts file and update rootfs partition
+
+---
+ arch/riscv/boot/dts/bouffalolab/bl808.dtsi            | 8 ++++++++
+ 1 files changed, 8 insertions(+), 0 deletion(-)
+
+diff --git a/arch/riscv/boot/dts/bouffalolab/bl808.dtsi b/arch/riscv/boot/dts/bouffalolab/bl808.dtsi
+index bdfed1bde043..41d7e0ed7bf0 100644
+--- a/arch/riscv/boot/dts/bouffalolab/bl808.dtsi
++++ b/arch/riscv/boot/dts/bouffalolab/bl808.dtsi
+@@ -123,5 +123,13 @@ plic: interrupt-controller@e0000000 {
+ 			#interrupt-cells = <2>;
+ 			riscv,ndev = <64>;
+ 		};
++
++        	clint: timer@e4000000 {
++                	compatible = "thead,c900-clint";
++	                reg = <0xe4000000 0xc000>;
++        	        interrupts-extended = <&cpu0_intc 3>,
++                	                      <&cpu0_intc 7>;
++	        };
++
+ 	};
+ };
+-- 
+2.25.1
+

@@ -1,0 +1,37 @@
+From 74d61805356687f55669af4e3a0949226a413af8 Mon Sep 17 00:00:00 2001
+From: Justin Hammond <justin@dynam.ac>
+Date: Sat, 21 Jan 2023 14:46:26 +0800
+Subject: [PATCH] update opensbi firmware base, image and dtb addresses
+
+---
+ platform/generic/objects.mk | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/platform/generic/objects.mk b/platform/generic/objects.mk
+index 136853e..9368789 100644
+--- a/platform/generic/objects.mk
++++ b/platform/generic/objects.mk
+@@ -22,7 +22,7 @@ platform-objs-y += platform.o
+ platform-objs-y += platform_override_modules.o
+ 
+ # Blobs to build
+-FW_TEXT_START=0x80000000
++FW_TEXT_START=0x3ef80000
+ FW_DYNAMIC=y
+ FW_JUMP=y
+ ifeq ($(PLATFORM_RISCV_XLEN), 32)
+@@ -30,9 +30,9 @@ ifeq ($(PLATFORM_RISCV_XLEN), 32)
+   FW_JUMP_ADDR=$(shell printf "0x%X" $$(($(FW_TEXT_START) + 0x400000)))
+ else
+   # This needs to be 2MB aligned for 64-bit system
+-  FW_JUMP_ADDR=$(shell printf "0x%X" $$(($(FW_TEXT_START) + 0x200000)))
++  FW_JUMP_ADDR=0x50000000
+ endif
+-FW_JUMP_FDT_ADDR=$(shell printf "0x%X" $$(($(FW_TEXT_START) + 0x2200000)))
++FW_JUMP_FDT_ADDR=0x51ff8000
+ FW_PAYLOAD=y
+ ifeq ($(PLATFORM_RISCV_XLEN), 32)
+   # This needs to be 4MB aligned for 32-bit system
+-- 
+2.25.1
+
