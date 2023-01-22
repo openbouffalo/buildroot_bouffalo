@@ -13,10 +13,6 @@ on:
     paths-ignore:
       - '.github/**'
 
-env:
-  bl_mcu_sdk_version: 356f258e83cf9f39598c593710dd95e31c0627e7
-  oblfr_version: v0.0.2
-
     
 jobs:
   buildroot:
@@ -77,6 +73,7 @@ jobs:
         echo "KERNEL=${{ github.workspace }}/buildroot/output/images/Image-${{ matrix.target }}.lz4" >> $GITHUB_ENV
         echo "DTB=${{ github.workspace }}/buildroot/output/images/bl808-*.dtb" >> $GITHUB_ENV
         echo "OPENSBI=${{ github.workspace }}/buildroot/output/images/fw_jump.bin" >> $GITHUB_ENV
+        echo "WHOLEBIN=${{ github.workspace }}/buildroot/output/images/whole_img_linux.bin" >> $GITHUB_ENV
     - name: Upload package
       uses: actions/upload-artifact@master
       with:
@@ -86,53 +83,7 @@ jobs:
           ${{env.KERNEL}}
           ${{env.DTB}}
           ${{env.OPENSBI}}
-  lowload:
-    runs-on: ubuntu-22.04
-    if: github.event_name != 'pull_request'
-    steps:
-    - name: install dependencies
-      run: |
-        sudo apt-get install -y make gcc g++ cmake
-    - name: Checkout bl_mcu_sdk
-      uses: actions/checkout@v3
-      with:
-        repository: bouffalolab/bl_mcu_sdk
-        path: bl_mcu_sdk
-        ref: ${{ env.bl_mcu_sdk_version }}
-    - name: Checkout OpenBouffalo Firmware Repository
-      uses: actions/checkout@v3
-      with:
-        repository: openbouffalo/OBLFR
-        path: oblfr
-        ref: ${{ env.oblfr_version }}
-    - name: toolchain download cache
-      id: toolchain-cache
-      uses: actions/cache@v3
-      env:
-        cache-name: cache-toolchain-files
-      with:
-        path: ${{ github.workspace }}/toolchain_gcc_t-head_linux/
-        key: ${{ runner.os }}-build-${{ env.cache-name }}
-    - name: Download Toolchain
-      if: steps.toolchain-cache.outputs.cache-hit != 'true'
-      run: |
-        git clone https://gitee.com/bouffalolab/toolchain_gcc_t-head_linux.git
-    - name: Compile Firmware
-      run: | 
-        PATH=$PATH:${{ github.workspace }}/toolchain_gcc_t-head_linux/bin/
-        cd ${{ github.workspace }}/oblfr/apps/d0_lowload
-        make
-        echo "D0LOWLOAD=${{ github.workspace }}/oblfr/apps/d0_lowload/build/build_out/d0_lowload_bl808_d0.bin" >> $GITHUB_ENV
-        cd ${{ github.workspace }}/oblfr/apps/m0_lowload
-        make
-        echo "M0LOWLOAD=${{ github.workspace }}/oblfr/apps/m0_lowload/build/build_out/m0_lowload_bl808_m0.bin" >> $GITHUB_ENV
-    - name: Upload Firmware
-      uses: actions/upload-artifact@master
-      with:
-        name: build artifacts
-        path: |
-          ${{env.D0LOWLOAD}}
-          ${{env.M0LOWLOAD}}
+          ${{env.WHOLEBIN}}
   createimages:
     if: github.event_name != 'pull_request'
     strategy:
@@ -140,7 +91,7 @@ jobs:
       matrix:
         target: [ pine64_ox64_defconfig, pine64_ox64_full_defconfig ]
     runs-on: ubuntu-22.04
-    needs: [buildroot, lowload]
+    needs: [buildroot]
     steps:
     - name: install dependencies
       run: |
@@ -159,7 +110,6 @@ jobs:
         cd ${{ github.workspace }}/build
         ls -lah 
         mv Image-${{ matrix.target }}.lz4 Image.lz4
-        ${{ github.workspace }}/buildroot_bouffalo/package/mergebin/mergebin.py
         mkdir firmware
         cp d0_lowload/build/build_out/*.bin firmware/
         cp m0_lowload/build/build_out/*.bin firmware/
