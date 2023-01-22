@@ -1,0 +1,10 @@
+config BR2_TARGET_OBLFR
+	bool "oblfr"
+	default y
+	select host-blmcusdk
+	select host-python3
+	help
+	  OpenBouffalo Low Level Boot Loaders
+
+	  https://github.com/openbouffalo/OBLFR
+
