@@ -1,0 +1,7 @@
+config BR2_PACKAGE_MERGEBIN
+    bool "mergebin"
+    default y
+    help
+      Python Script to Create combined OpenSBI/Kernel/DTB image for BL808
+
+      https://github.com/openbouffalo/buildroot_bouffalo/tree/main/package/mergebin
