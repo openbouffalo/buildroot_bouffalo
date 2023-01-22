@@ -12,7 +12,6 @@ on:
     branches: [ main ]
     paths-ignore:
       - '.github/**'
-
     
 jobs:
   buildroot:
@@ -35,16 +34,15 @@ jobs:
       uses: actions/checkout@v3
       with:
         path: buildroot_bouffalo
-    - name: buildroot target cache
-      id: br-output-cache
+    - name: buildroot ccache
+      id: br-ccache
       uses: actions/cache@v3
       env:
-        cache-name: br-output-cache
+        cache-name: br-ccache
       with:
-        path: ${{ github.workspace }}/buildroot/output/images/
-        key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ matrix.target }}-${{ hashFiles(format('buildroot_bouffalo/configs/{0}', matrix.target), 'buildroot_bouffalo/board/pine64/ox64/**', 'buildroot_bouffalo/packages/**') }}
+        path: $HOME/.ccache
+        key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ matrix.target }}
     - name: buildroot download cache
-      if: steps.br-output-cache.outputs.cache-hit != 'true'
       uses: actions/cache@v3
       env:
         cache-name: cache-download-files
@@ -52,12 +50,12 @@ jobs:
         path: ${{ github.workspace }}/buildroot/dl/
         key: ${{ runner.os }}-build-${{ env.cache-name }}-downloads
     - name: Bulid
-      if: steps.br-output-cache.outputs.cache-hit != 'true'
       run: |
         export BR_BOUFFALO_OVERLAY_PATH=$(pwd)/buildroot_bouffalo
         cd buildroot
         make BR2_EXTERNAL=$BR_BOUFFALO_OVERLAY_PATH ${{ matrix.target }}
         make
+        make ccache-stats
     - name: Pack
       run: |
         cd ${{ github.workspace }}/buildroot/output/images/
@@ -84,8 +82,8 @@ jobs:
           ${{env.DTB}}
           ${{env.OPENSBI}}
           ${{env.WHOLEBIN}}
+
   createimages:
-    if: github.event_name != 'pull_request'
     strategy:
       fail-fast: true
       matrix:
