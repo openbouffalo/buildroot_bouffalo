@@ -73,6 +73,7 @@ jobs:
         echo "KERNEL=${{ github.workspace }}/buildroot/output/images/Image-${{ matrix.target }}.lz4" >> $GITHUB_ENV
         echo "DTB=${{ github.workspace }}/buildroot/output/images/bl808-*.dtb" >> $GITHUB_ENV
         echo "OPENSBI=${{ github.workspace }}/buildroot/output/images/fw_jump.bin" >> $GITHUB_ENV
+        echo "LOWLOAD=${{ github.workspace }}/buildroot/output/images/*_lowload_bl808_*.bin" >> $GITHUB_ENV
         echo "WHOLEBIN=${{ github.workspace }}/buildroot/output/images/whole_img_linux.bin" >> $GITHUB_ENV
     - name: Upload package
       uses: actions/upload-artifact@master
@@ -83,6 +84,7 @@ jobs:
           ${{env.KERNEL}}
           ${{env.DTB}}
           ${{env.OPENSBI}}
+          ${{env.LOWLOAD}}
           ${{env.WHOLEBIN}}
   createimages:
     if: github.event_name != 'pull_request'
@@ -111,8 +113,7 @@ jobs:
         ls -lah 
         mv Image-${{ matrix.target }}.lz4 Image.lz4
         mkdir firmware
-        cp d0_lowload/build/build_out/*.bin firmware/
-        cp m0_lowload/build/build_out/*.bin firmware/
+        cp *_lowload_bl808_*.bin firmware/
         cp whole_img_linux.bin firmware/
         cp sdcard-${{ matrix.target }}.img.xz firmware/
         tar -czvf bl808-linux-${{ matrix.target }}.tar.gz firmware
