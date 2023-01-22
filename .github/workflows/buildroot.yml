@@ -40,7 +40,7 @@ jobs:
       env:
         cache-name: br-ccache
       with:
-        path: $HOME/.ccache
+        path: /home/runner/.buildroot-ccache
         key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ matrix.target }}
     - name: buildroot download cache
       uses: actions/cache@v3
