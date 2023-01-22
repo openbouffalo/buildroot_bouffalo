@@ -1,1 +1,12 @@
-source "$BR2_EXTERNAL_BOUFFALO_BR_PATH/package/cloudutils/Config.in"
+menu "Custom Packages"
+source "$BR2_EXTERNAL_BOUFFALO_BR_PATH/package/Config.in"
+endmenu
+
+menu "BootLoaders"
+source "$BR2_EXTERNAL_BOUFFALO_BR_PATH/boot/Config.in"
+endmenu
+
+menu "Host Packages"
+source "$BR2_EXTERNAL_BOUFFALO_BR_PATH/package/Config.in.host"
+endmenu
+

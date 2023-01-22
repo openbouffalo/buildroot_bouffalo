@@ -1,0 +1,7 @@
+config BR2_PACKAGE_BLMCUSDK
+    bool "host-blmcusdk"
+    select BR2_PACKAGE_HOST_CMAKE
+    select BR2_PACKAGE_HOST_MAKE
+    default y
+    help
+      bl_mcu_sdk is the Bouffalo MCU SDK

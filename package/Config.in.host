@@ -1,0 +1,2 @@
+source "$BR2_EXTERNAL_BOUFFALO_BR_PATH/package/blmcusdk/Config.in.host"
+source "$BR2_EXTERNAL_BOUFFALO_BR_PATH/package/riscv-unknown-elf-gcc/Config.in.host"
