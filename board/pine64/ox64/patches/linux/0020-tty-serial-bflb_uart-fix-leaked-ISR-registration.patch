@@ -1,0 +1,247 @@
+From 21dd2b6821d171463407a77536ea8044dc64bbeb Mon Sep 17 00:00:00 2001
+From: Allen Martin <armartin@gmail.com>
+Date: Fri, 20 Jan 2023 19:42:33 -0800
+Subject: [PATCH 20/21] tty: serial: bflb_uart: fix leaked ISR registration
+
+-call devm_free_irq() in shutdown to release ISR registered in
+ startup.
+-change many functions to take driver private bflb_uart_port *
+ instead of serial_core uart_port *
+-add to_bflb_uart_port() to assist with above
+-switch to using uart_port_tx_limited() serial_core helper
+ which is the preferred way to do transmission instead of
+ accessing serial_core xmit buffer directly
+---
+ drivers/tty/serial/bflb_uart.c | 133 ++++++++++++++++++++-------------
+ 1 file changed, 79 insertions(+), 54 deletions(-)
+
+diff --git a/drivers/tty/serial/bflb_uart.c b/drivers/tty/serial/bflb_uart.c
+index b091ad7a891a..5911f489959c 100644
+--- a/drivers/tty/serial/bflb_uart.c
++++ b/drivers/tty/serial/bflb_uart.c
+@@ -82,12 +82,17 @@
+ #define BFLB_UART_MAXPORTS 		8
+ #define BFLB_UART_BAUD			2000000
+ #define BFLB_UART_RX_FIFO_TH		7
++#define BFLB_UART_TX_FIFO_DEPTH		32
+ 
+ struct bflb_uart_port {
+ 	struct uart_port port;
+ 	struct clk *clk;
+ };
+ 
++#define to_bflb_uart_port(p) (container_of((p), \
++			      struct bflb_uart_port, \
++			      port))
++
+ static struct bflb_uart_port *bflb_uart_ports[BFLB_UART_MAXPORTS];
+ 
+ static inline u32 rdl(struct uart_port *port, u32 reg)
+@@ -227,91 +232,104 @@ static void bflb_uart_set_termios(struct uart_port *port,
+ 	spin_unlock_irqrestore(&port->lock, flags);
+ }
+ 
+-static void bflb_uart_rx_chars(struct uart_port *port)
++static void bflb_uart_rx_chars(struct bflb_uart_port *bp)
+ {
+ 	unsigned char ch, flag;
+ 	unsigned long status;
+ 
+-	while ((status = rdl(port, UART_FIFO_CONFIG_1)) & UART_RX_FIFO_CNT_MSK) {
+-		ch = rdl(port, UART_FIFO_RDATA) & UART_FIFO_RDATA_MSK;
++	while ((status = rdl(&bp->port, UART_FIFO_CONFIG_1)) & UART_RX_FIFO_CNT_MSK) {
++		ch = rdl(&bp->port, UART_FIFO_RDATA) & UART_FIFO_RDATA_MSK;
+ 		flag = TTY_NORMAL;
+-		port->icount.rx++;
++		bp->port.icount.rx++;
+ 
+-		if (uart_handle_sysrq_char(port, ch))
++		if (uart_handle_sysrq_char(&bp->port, ch))
+ 			continue;
+-		uart_insert_char(port, 0, 0, ch, flag);
++		uart_insert_char(&bp->port, 0, 0, ch, flag);
+ 	}
+ 
+-	spin_unlock(&port->lock);
+-	tty_flip_buffer_push(&port->state->port);
+-	spin_lock(&port->lock);
++	spin_unlock(&bp->port.lock);
++	tty_flip_buffer_push(&bp->port.state->port);
++	spin_lock(&bp->port.lock);
+ }
+ 
+-static void bflb_uart_tx_chars(struct uart_port *port)
++/**
++ * bflb_uart_txfifo_space() - How much space is left int the TX FIFO?
++ * @bp: pointer to a struct bflb_uart_port
++ *
++ * Read the transmit FIFO count to find out how much space is left
++ *
++ * Returns: UART_TX_FIFO_CNT - count of space left in the TX FIFO
++ */
++static int bflb_uart_txfifo_space(struct bflb_uart_port *bp)
+ {
+-	struct circ_buf *xmit = &port->state->xmit;
+-	unsigned int pending, count;
++	return (rdl(&bp->port, UART_FIFO_CONFIG_1)
++		& UART_TX_FIFO_CNT_MSK) >> UART_TX_FIFO_CNT_SFT;
++}
+ 
+-	if (port->x_char) {
+-		/* Send special char - probably flow control */
+-		wrl(port, UART_FIFO_WDATA, port->x_char);
+-		port->x_char = 0;
+-		port->icount.tx++;
+-		return;
+-	}
++/**
++ * bflb_uart_tx_char() - enqueue a byte to transmit onto the TX FIFO
++ * @bp: pointer to a struct bflb_uart_port
++ * @ch: character to transmit
++ *
++ * Enqueue a byte @ch onto the transmit FIFO, given a pointer @bp to the
++ * struct bflb_uart_port * to transmit on.
++ *
++ * Context: Any context.
++ */
++static void bflb_uart_tx_char(struct bflb_uart_port *bp, int ch)
++{
++	wrl(&bp->port, UART_FIFO_WDATA, ch);
++}
+ 
+-	pending = uart_circ_chars_pending(xmit);
+-	if (pending > 0) {
+-		count = (rdl(port, UART_FIFO_CONFIG_1) &
+-			 UART_TX_FIFO_CNT_MSK) >> UART_TX_FIFO_CNT_SFT;
+-		if (count > pending)
+-			count = pending;
+-		if (count > 0) {
+-			pending -= count;
+-			while (count--) {
+-				wrl(port, UART_FIFO_WDATA, xmit->buf[xmit->tail]);
+-				xmit->tail = (xmit->tail + 1) & (UART_XMIT_SIZE - 1);
+-				port->icount.tx++;
+-			}
+-			if (pending < WAKEUP_CHARS)
+-				uart_write_wakeup(port);
+-		}
+-	}
++/**
++ * bflb_uart_tx_chars() - enqueue multiple bytes onto the TX FIFO
++ * @bp: pointer to a struct bflb_uart_port
++ *
++ * Transfer up to a TX FIFO size's worth of characters from the Linux serial
++ * transmit buffer to the BFLB UART TX FIFO.
++ *
++ * Context: Any context.  Expects @bp->port.lock to be held by caller.
++ */
++static void bflb_uart_tx_chars(struct bflb_uart_port *bp)
++{
++	u8 ch;
+ 
+-	if (pending == 0)
+-		bflb_uart_stop_tx(port);
++	uart_port_tx_limited(&bp->port, ch, BFLB_UART_TX_FIFO_DEPTH,
++		bflb_uart_txfifo_space(bp),
++		bflb_uart_tx_char(bp, ch),
++		({}));
+ }
+ 
+ static irqreturn_t bflb_uart_interrupt(int irq, void *data)
+ {
+-	struct uart_port *port = data;
++	struct bflb_uart_port *bp = data;
+ 	u32 isr, val;
+ 
+-	isr = rdl(port, UART_INT_STS);
+-	wrl(port, UART_INT_CLEAR, isr);
++	isr = rdl(&bp->port, UART_INT_STS);
++	wrl(&bp->port, UART_INT_CLEAR, isr);
+ 
+-	isr &= ~rdl(port, UART_INT_MASK);
++	isr &= ~rdl(&bp->port, UART_INT_MASK);
+ 
+-	spin_lock(&port->lock);
++	spin_lock(&bp->port.lock);
+ 
+ 	if (isr & UART_URX_FER_INT) {
+ 		/* RX FIFO error interrupt */
+-		val = rdl(port, UART_FIFO_CONFIG_0);
++		val = rdl(&bp->port, UART_FIFO_CONFIG_0);
+ 		if (val & UART_RX_FIFO_OVERFLOW)
+-			port->icount.overrun++;
++			bp->port.icount.overrun++;
+ 
+ 		val |= UART_RX_FIFO_CLR;
+-		wrl(port, UART_FIFO_CONFIG_0, val);
++		wrl(&bp->port, UART_FIFO_CONFIG_0, val);
+ 	}
+ 
+ 	if (isr & (UART_URX_FIFO_INT | UART_URX_RTO_INT)) {
+-		bflb_uart_rx_chars(port);
++		bflb_uart_rx_chars(bp);
+ 	}
+ 	if (isr & (UART_UTX_FIFO_INT | UART_UTX_END_INT)) {
+-		bflb_uart_tx_chars(port);
++		bflb_uart_tx_chars(bp);
+ 	}
+ 
+-	spin_unlock(&port->lock);
++	spin_unlock(&bp->port.lock);
+ 
+ 	return IRQ_RETVAL(isr);
+ }
+@@ -335,19 +353,22 @@ static void bflb_uart_config_port(struct uart_port *port, int flags)
+ static int bflb_uart_startup(struct uart_port *port)
+ {
+ 	unsigned long flags;
+-	int ret;
+ 	u32 val;
++	struct bflb_uart_port *bp = to_bflb_uart_port(port);
++	int ret;
++
++	dev_dbg(port->dev, "startup %s\n", port->name);
++
++	spin_lock_irqsave(&port->lock, flags);
+ 
+ 	ret = devm_request_irq(port->dev, port->irq, bflb_uart_interrupt,
+-			       IRQF_SHARED, port->name, port);
++			       IRQF_SHARED, port->name, bp);
+ 	if (ret) {
+ 		dev_err(port->dev, "fail to request serial irq %d, ret=%d\n",
+ 			port->irq, ret);
+ 		return ret;
+ 	}
+ 
+-	spin_lock_irqsave(&port->lock, flags);
+-
+ 	val = rdl(port, UART_INT_MASK);
+ 	val |= 0xfff;
+ 	wrl(port, UART_INT_MASK, val);
+@@ -383,10 +404,14 @@ static int bflb_uart_startup(struct uart_port *port)
+ static void bflb_uart_shutdown(struct uart_port *port)
+ {
+ 	unsigned long flags;
++	struct bflb_uart_port *bp = to_bflb_uart_port(port);
++
++	dev_dbg(port->dev, "shutdown %s\n", port->name);
+ 
+ 	spin_lock_irqsave(&port->lock, flags);
+ 	/* mask all interrupts now */
+ 	wrl(port, UART_INT_MASK, UART_UTX_END_INT | UART_URX_END_INT);
++	devm_free_irq(port->dev, port->irq, bp);
+ 	spin_unlock_irqrestore(&port->lock, flags);
+ }
+ 
+@@ -589,7 +614,7 @@ static int bflb_uart_probe(struct platform_device *pdev)
+ 	port->line = index;
+ 	port->type = PORT_BFLB;
+ 	port->iotype = UPIO_MEM;
+-	port->fifosize = 32;
++	port->fifosize = BFLB_UART_TX_FIFO_DEPTH;
+ 	port->ops = &bflb_uart_ops;
+ 	port->flags = UPF_BOOT_AUTOCONF;
+ 	port->dev = &pdev->dev;
+-- 
+2.25.1
+
