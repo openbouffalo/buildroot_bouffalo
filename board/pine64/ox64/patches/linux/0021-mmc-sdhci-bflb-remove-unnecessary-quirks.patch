@@ -1,0 +1,31 @@
+From 83dd2f89365b55df3901da4ecabeb38cdff102f5 Mon Sep 17 00:00:00 2001
+From: Allen Martin <armartin@gmail.com>
+Date: Sat, 21 Jan 2023 03:35:04 -0800
+Subject: [PATCH 21/21] mmc: sdhci-bflb: remove unnecessary quirks
+
+Remove quirks that were added during bringup but are not required.
+This will enable DMA and ADMA on sdcard.
+---
+ drivers/mmc/host/sdhci-bflb.c | 6 +-----
+ 1 file changed, 1 insertion(+), 5 deletions(-)
+
+diff --git a/drivers/mmc/host/sdhci-bflb.c b/drivers/mmc/host/sdhci-bflb.c
+index aacf234387af..1e590a151c04 100644
+--- a/drivers/mmc/host/sdhci-bflb.c
++++ b/drivers/mmc/host/sdhci-bflb.c
+@@ -55,11 +55,7 @@ static const struct sdhci_pltfm_data sdhci_bflb_pdata = {
+ 	.quirks	= SDHCI_QUIRK_NO_SIMULT_VDD_AND_POWER |
+ 		  SDHCI_QUIRK_NO_BUSY_IRQ |
+ 		  SDHCI_QUIRK_BROKEN_TIMEOUT_VAL |
+-		  SDHCI_QUIRK_BROKEN_DMA |
+-		  SDHCI_QUIRK_BROKEN_ADMA |
+-		  SDHCI_QUIRK_BROKEN_CARD_DETECTION |
+-		  SDHCI_QUIRK_INVERTED_WRITE_PROTECT |
+-		  SDHCI_QUIRK_NO_HISPD_BIT,
++		  SDHCI_QUIRK_INVERTED_WRITE_PROTECT,
+ };
+ 
+ static int sdhci_bflb_probe(struct platform_device *pdev)
+-- 
+2.25.1
+
