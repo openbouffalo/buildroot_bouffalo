@@ -39,6 +39,8 @@ Download your prefered image above and extract the files.
     + Release BOOT button
 - Run DevCube, select [BL808], and switch to [MCU] page
 - Select the uart port and set baudrate with 2000000
+    + UART TX is physical pin 1/GPIO 14.
+    + UART RX is physical pin 2/GPIO 15.
 - M0 Group[Group0] Image Addr [0x58000000] [PATH to m0_low_load_bl808_m0.bin]
 - D0 Group[Group1] Image Addr [0x58000000] [PATH to d0_low_load_bl808_d0.bin]
 - Click 'Create & Download' and wait until it's done
@@ -46,4 +48,8 @@ Download your prefered image above and extract the files.
 - Enable 'Single Download', set Address with 0xD2000, choose [PATH to whole_image_linux.bin]
 - Click 'Create & Download' again and wait until it's done
 - flash the sdcard-pine64-*.img.xz to your SD card (you can use dd (after uncompressing) or https://github.com/balena-io/etcher)
+- Serial Console access:
+    + UART TX is physical pin 32/GPIO 16.
+    + UART RX is physical pin 31/GPIO 17.
+    + Baud 2000000.
 - Enjoy!
