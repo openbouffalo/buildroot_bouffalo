@@ -1,0 +1,1438 @@
+From b77f0c9fc31c7624f3503d957a2ced2f6999d831 Mon Sep 17 00:00:00 2001
+From: "Grant T. Olson" <kgo@grant-olson.net>
+Date: Mon, 30 Jan 2023 10:03:36 -0500
+Subject: [PATCH] Driver for BL808 Watchdog.
+
+---
+ .../dts/bouffalolab/bl808-pine64-ox64.dts     |   4 +
+ arch/riscv/boot/dts/bouffalolab/bl808.dtsi    |   5 +
+ drivers/watchdog/Kconfig                      |  10 +
+ drivers/watchdog/Makefile                     |   3 +
+ drivers/watchdog/bflb_wdt.c                   | 297 ++++++++++
+ drivers/watchdog/max_timeout                  | 520 ++++++++++++++++++
+ drivers/watchdog/timeout_max                  | 520 ++++++++++++++++++
+ 7 files changed, 1359 insertions(+)
+ create mode 100644 drivers/watchdog/bflb_wdt.c
+ create mode 100644 drivers/watchdog/max_timeout
+ create mode 100644 drivers/watchdog/timeout_max
+
+diff --git a/arch/riscv/boot/dts/bouffalolab/bl808-pine64-ox64.dts b/arch/riscv/boot/dts/bouffalolab/bl808-pine64-ox64.dts
+index ce80095940de..7bc761153494 100644
+--- a/arch/riscv/boot/dts/bouffalolab/bl808-pine64-ox64.dts
++++ b/arch/riscv/boot/dts/bouffalolab/bl808-pine64-ox64.dts
+@@ -52,3 +52,7 @@ &sdhci0 {
+ &ipclic {
+ 	status = "okay";
+ };
++
++&wdt {
++     status = "okay";
++};
+diff --git a/arch/riscv/boot/dts/bouffalolab/bl808.dtsi b/arch/riscv/boot/dts/bouffalolab/bl808.dtsi
+index f1e354f58a4d..e737796e66b5 100644
+--- a/arch/riscv/boot/dts/bouffalolab/bl808.dtsi
++++ b/arch/riscv/boot/dts/bouffalolab/bl808.dtsi
+@@ -121,5 +121,10 @@ clint: timer@e4000000 {
+                 	                      <&cpu0_intc 7>;
+ 	        };
+ 
++                wdt: wdt@2000a500 {
++                        compatible = "bflb,bflb808-wdt";
++                        reg = <0x2000a500 0x100>;
++                        status = "disabled";
++                };
+ 	};
+ };
+diff --git a/drivers/watchdog/Kconfig b/drivers/watchdog/Kconfig
+index 0bc40b763b06..3d86cc697b8b 100644
+--- a/drivers/watchdog/Kconfig
++++ b/drivers/watchdog/Kconfig
+@@ -181,6 +181,16 @@ config BD957XMUF_WATCHDOG
+ 	  watchdog. Alternatively say M to compile the driver as a module,
+ 	  which will be called bd9576_wdt.
+ 
++config BFLB_WATCHDOG
++	tristate "BFLB BL808 Watchdog"
++	select WATCHDOG_CORE
++	help
++	  Support for the watchdog on BL808.
++
++	  Say Y here to include support for the BL808 watchdog.
++	  Alternately say M to compile the driver as a module,
++	  which will be called bflb_wdt.
++
+ config DA9052_WATCHDOG
+ 	tristate "Dialog DA9052 Watchdog"
+ 	depends on PMIC_DA9052 || COMPILE_TEST
+diff --git a/drivers/watchdog/Makefile b/drivers/watchdog/Makefile
+index 9cbf6580f16c..736e7224fe4a 100644
+--- a/drivers/watchdog/Makefile
++++ b/drivers/watchdog/Makefile
+@@ -192,6 +192,9 @@ obj-$(CONFIG_MEN_A21_WDT) += mena21_wdt.o
+ obj-$(CONFIG_PSERIES_WDT) += pseries-wdt.o
+ obj-$(CONFIG_WATCHDOG_RTAS) += wdrtas.o
+ 
++# RISC-V Architecture
++obj-$(CONFIG_BFLB_WATCHDOG) += bflb_wdt.o
++
+ # S390 Architecture
+ obj-$(CONFIG_DIAG288_WATCHDOG) += diag288_wdt.o
+ 
+diff --git a/drivers/watchdog/bflb_wdt.c b/drivers/watchdog/bflb_wdt.c
+new file mode 100644
+index 000000000000..9319b1afc55e
+--- /dev/null
++++ b/drivers/watchdog/bflb_wdt.c
+@@ -0,0 +1,297 @@
++// SPDX-License-Identifier: GPL-2.0
++
++#include <linux/err.h>
++#include <linux/init.h>
++#include <linux/module.h>
++#include <linux/kernel.h>
++#include <linux/utsname.h>
++#include <linux/io.h>
++#include <linux/of.h>
++#include <linux/platform_device.h>
++#include <linux/watchdog.h>
++
++#define BFLB_INT_TICKS_PER_SEC 1024
++#define BFLB_TICK_DIV 256
++#define BFLB_TICKS_PER_SEC ( BFLB_INT_TICKS_PER_SEC / BFLB_TICK_DIV )
++#define BFLB_MAX_SECS ( 65535 / BFLB_TICKS_PER_SEC )
++
++#define BFLB_DEFAULT_TIMEOUT 60
++
++#define BFLB_REG_BASE 0x2000A500
++
++#define BFLB_REG_WFAR 0x9C
++#define BFLB_VAL_WFAR 0xBABA
++
++#define BFLB_REG_WSAR 0xA0
++#define BFLB_VAL_WSAR 0xEB10
++
++#define BFLB_REG_WVR 0x6C
++#define BFLB_REG_WCR 0x98
++#define BFLB_VAL_WCR 0x1
++
++#define BFLB_REG_WMER 0x64
++#define BFLB_VAL_WE 0x1
++#define BFLB_VAL_WRIE 0x2
++
++#define BFLB_REG_TCCR 0x00
++#define BFLB_MASK_CS_WDT 0xF00
++#define BFLB_VAL_CS_1K 0x200
++
++#define BFLB_REG_TCDR 0xbc
++#define BFLB_MASK_TCDR 0xFF000000
++#define BFLB_VAL_TCDR 0xFF000000
++
++#define BFLB_REG_WMR 0x68
++#define BFLB_MASK_WMR 0xffff
++#define BFLB_VAL_WMR 240
++
++
++struct bflb_watchdog_device {
++	struct watchdog_device wdd;
++	struct device *dev;
++	void __iomem *regs;
++};
++
++static inline
++struct bflb_watchdog_device *to_bflb_wdd(struct watchdog_device *wdd)
++{
++	return container_of(wdd, struct bflb_watchdog_device, wdd);
++}
++
++// Access key registers must be written before write
++// operations presumably to prevent accidentally enabling
++// the watchdog and killing the machine.
++static inline int bflb_unlock_watchdog(struct bflb_watchdog_device *bflb_wdd)
++{
++	writew(BFLB_VAL_WFAR, bflb_wdd->regs + BFLB_REG_WFAR);
++	writew(BFLB_VAL_WSAR, bflb_wdd->regs + BFLB_REG_WSAR);
++
++	return 0;
++}
++
++static int bflb_wdt_ping(struct watchdog_device *wdd)
++{
++	uint32_t reg_val;
++	struct bflb_watchdog_device *bflb_wdd = to_bflb_wdd(wdd);
++
++	dev_dbg(wdd->parent, "bflb_wdt_ping");
++	bflb_unlock_watchdog(bflb_wdd);
++	reg_val = readl(bflb_wdd->regs + BFLB_REG_WCR);
++	reg_val |= BFLB_VAL_WCR;
++	writel(reg_val, bflb_wdd->regs + BFLB_REG_WCR);
++
++	return 0;
++};
++
++static inline void bflb_wdt_update_timeout_reg(struct watchdog_device *wdd)
++{
++	unsigned int timeout_ticks;
++	struct bflb_watchdog_device *bflb_wdd = to_bflb_wdd(wdd);
++
++	bflb_unlock_watchdog(bflb_wdd);
++	timeout_ticks = wdd->timeout * BFLB_TICKS_PER_SEC;
++	writew(timeout_ticks, bflb_wdd->regs + BFLB_REG_WMR);
++}
++
++static int bflb_wdt_set_timeout(struct watchdog_device *wdd,
++				unsigned int timeout)
++{
++	if (timeout >= wdd->max_timeout) {
++		dev_warn(wdd->parent,
++			"timeout %i > max_timeout %i, using max_timeout...",
++			timeout, wdd->max_timeout);
++		timeout = wdd->max_timeout;
++	}
++
++	wdd->timeout = timeout;
++
++	bflb_wdt_update_timeout_reg(wdd);
++
++	dev_dbg(wdd->parent, "bflb_wdt_set_timeout (s=%i tps=%i)",
++		timeout, BFLB_TICKS_PER_SEC);
++
++	return 0;
++}
++
++static int bflb_wdt_start(struct watchdog_device *wdd)
++{
++	uint32_t reg_val;
++	struct bflb_watchdog_device *bflb_wdd = to_bflb_wdd(wdd);
++
++
++	// And enable the watchdog
++	bflb_unlock_watchdog(bflb_wdd);
++	reg_val = readl(bflb_wdd->regs + BFLB_REG_WMER);
++	reg_val |= BFLB_VAL_WE;
++	writel(reg_val, bflb_wdd->regs + BFLB_REG_WMER);
++
++	dev_info(wdd->parent, "bflb_wdt_start started...");
++
++	return 0;
++}
++
++static int bflb_wdt_stop(struct watchdog_device *wdd)
++{
++	uint32_t reg_val;
++	struct bflb_watchdog_device *bflb_wdd = to_bflb_wdd(wdd);
++
++	// disable
++	bflb_unlock_watchdog(bflb_wdd);
++	reg_val = readl(bflb_wdd->regs + BFLB_REG_WMER);
++	reg_val &= ~BFLB_VAL_WE;
++	writel(reg_val, bflb_wdd->regs + BFLB_REG_WMER);
++
++	dev_info(wdd->parent, "bflb_wdt_stopped...");
++
++	return 0;
++};
++
++
++static unsigned int bflb_wdt_timeleft(struct watchdog_device *wdd)
++{
++	unsigned int used_seconds;
++	unsigned int remaining_seconds;
++	unsigned int ticks;
++	struct bflb_watchdog_device *bflb_wdd = to_bflb_wdd(wdd);
++
++	ticks = readw(bflb_wdd->regs + BFLB_REG_WVR);
++
++	used_seconds = ticks / BFLB_TICKS_PER_SEC;
++	remaining_seconds = wdd->max_timeout - used_seconds;
++	dev_dbg(wdd->parent, "bflb_wdt_time left %i (elapsed tick %i, sec %i)",
++		remaining_seconds, ticks, used_seconds);
++
++	return remaining_seconds;
++};
++
++static const struct watchdog_info bflb_wdt_info = {
++	.identity = "bflb_wdt",
++	.options = WDIOF_SETTIMEOUT |
++	WDIOF_KEEPALIVEPING |
++	WDIOF_MAGICCLOSE,
++};
++
++static const struct watchdog_ops bflb_wdt_ops = {
++	.start = bflb_wdt_start,
++	.stop = bflb_wdt_stop,
++	.ping = bflb_wdt_ping,
++	.set_timeout = bflb_wdt_set_timeout,
++	.get_timeleft = bflb_wdt_timeleft,
++};
++
++
++static int __init bflb_wdt_probe(struct platform_device *pdev)
++{
++	struct bflb_watchdog_device *bflb_wdd;
++	struct watchdog_device *wdd;
++	struct resource *res;
++	int err;
++	uint32_t reg_val;
++
++	dev_dbg(&pdev->dev, "bflb_wdt_probe started");
++
++	bflb_wdd = devm_kzalloc(&pdev->dev, sizeof(*bflb_wdd), GFP_KERNEL);
++	if (!bflb_wdd) return -ENOMEM;
++
++	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
++	bflb_wdd->regs = devm_ioremap_resource(&pdev->dev, res);
++	if (IS_ERR(bflb_wdd->regs))
++		return PTR_ERR(bflb_wdd->regs);
++
++	wdd = &bflb_wdd->wdd;
++
++	wdd->info = &bflb_wdt_info;
++	wdd->ops = &bflb_wdt_ops;
++
++	wdd->timeout = BFLB_DEFAULT_TIMEOUT;
++	wdd->max_timeout = BFLB_MAX_SECS;
++	wdd->min_timeout = 1;
++	wdd->parent = &pdev->dev;
++
++	watchdog_stop_on_reboot(wdd);
++	watchdog_stop_on_unregister(wdd);
++	watchdog_set_nowayout(wdd, WATCHDOG_NOWAYOUT);
++	watchdog_init_timeout(wdd, BFLB_DEFAULT_TIMEOUT, &pdev->dev);
++
++	// Setup registers
++
++	// Set to reboot on watchdog, disable until we start
++	bflb_unlock_watchdog(bflb_wdd);
++	reg_val = readl(bflb_wdd->regs + BFLB_REG_WMER);
++	reg_val &= ~BFLB_VAL_WE;
++	reg_val |= BFLB_VAL_WRIE;
++	writel(reg_val, bflb_wdd->regs + BFLB_REG_WMER);
++
++	// Set to 1K per second clock
++	reg_val = readl(bflb_wdd->regs + BFLB_REG_TCCR);
++	reg_val &= ~BFLB_MASK_CS_WDT;
++	reg_val |= BFLB_VAL_CS_1K;
++	writel(reg_val, bflb_wdd->regs + BFLB_REG_TCCR);
++
++	// Max out divider to 255, meaning actual
++	// ticks will happen 4 times a second, or
++	// every 250 ms.
++	reg_val = readl(bflb_wdd->regs + BFLB_REG_TCDR);
++	reg_val &= ~BFLB_MASK_TCDR;
++	reg_val |= BFLB_VAL_TCDR;
++	writel(reg_val, bflb_wdd->regs + BFLB_REG_TCDR);
++
++	// Set last valid timeout value
++	bflb_wdt_update_timeout_reg(wdd);
++
++	err = devm_watchdog_register_device(&pdev->dev, wdd);
++	if (err) return err;
++
++	platform_set_drvdata(pdev, bflb_wdd);
++
++	dev_info(&pdev->dev, "bflb_wdt_probe completed...");
++
++	return 0;
++}
++
++static int __exit bflb_wdt_remove(struct platform_device *pdev)
++{
++	dev_info(&pdev->dev, "bflb_wdt_remove removed...");
++
++	return 0;
++}
++
++static const struct of_device_id bflb_wdt_match[] = {
++	{
++		.compatible = "bflb,bflb808-wdt",
++	},
++	{},
++};
++
++MODULE_DEVICE_TABLE(of, bflb_wdt_match);
++
++static struct platform_driver bflb_wdt_driver = {
++	.probe = bflb_wdt_probe,
++	.remove = bflb_wdt_remove,
++	.driver = {
++		.name = "bflb_wdt",
++		.owner = THIS_MODULE,
++		.of_match_table = bflb_wdt_match,
++  },
++};
++
++
++static int __init bflb_wdt_init(void)
++{
++	int res;
++
++	res = platform_driver_register(&bflb_wdt_driver);
++	if(res)
++		pr_alert("bflb_wdt_init FAILED (%i)\n", res);
++	else
++		pr_alert("bflb_wdt_init: %s\n", "success");
++
++	return res;
++}
++
++arch_initcall(bflb_wdt_init);
++
++MODULE_LICENSE("GPL");
++MODULE_DESCRIPTION("BL808 Watchdog support");
++MODULE_AUTHOR("Grant Olson <kgo@grant-olson.net");
++
+diff --git a/drivers/watchdog/max_timeout b/drivers/watchdog/max_timeout
+new file mode 100644
+index 000000000000..05af144d06bc
+--- /dev/null
++++ b/drivers/watchdog/max_timeout
+@@ -0,0 +1,520 @@
++advantech_ec_wdt.c:	wdd->timeout = t;
++advantech_ec_wdt.c:	adv_ec_wdt_set_timeout(wdd, wdd->timeout);
++apple_wdt.c:	wdd->timeout = s;
++arm_smc_wdt.c:		wdd->timeout = timeout;
++arm_smc_wdt.c:	wdd->info = &smcwd_info;
++arm_smc_wdt.c:		wdd->ops = &smcwd_ops;
++arm_smc_wdt.c:		wdd->ops = &smcwd_timeleft_ops;
++arm_smc_wdt.c:	wdd->timeout = res.a2;
++arm_smc_wdt.c:	wdd->max_timeout = res.a2;
++arm_smc_wdt.c:	wdd->min_timeout = res.a1;
++arm_smc_wdt.c:	wdd->parent = &pdev->dev;
++arm_smc_wdt.c:	err = smcwd_set_timeout(wdd, wdd->timeout);
++arm_smc_wdt.c:		 wdd->timeout, nowayout);
++asm9260_wdt.c:	counter = wdd->timeout * priv->wdt_freq;
++asm9260_wdt.c:	wdd->timeout = to;
++asm9260_wdt.c:	wdd->info = &asm9260_wdt_ident;
++asm9260_wdt.c:	wdd->ops = &asm9260_wdt_ops;
++asm9260_wdt.c:	wdd->min_timeout = 1;
++asm9260_wdt.c:	wdd->max_timeout = BM_WDTC_MAX(priv->wdt_freq);
++asm9260_wdt.c:	wdd->parent = dev;
++asm9260_wdt.c:	wdd->timeout = ASM9260_WDT_DEFAULT_TIMEOUT;
++asm9260_wdt.c:		 wdd->timeout, mode_name[priv->mode]);
++aspeed_wdt.c:	aspeed_wdt_enable(wdt, wdd->timeout * WDT_RATE_1MHZ);
++aspeed_wdt.c:	wdd->timeout = timeout;
++aspeed_wdt.c:	actual = min(timeout, wdd->max_hw_heartbeat_ms / 1000);
++aspeed_wdt.c:	wdd->pretimeout = pretimeout;
++at91sam9_wdt.c:	wdt->next_heartbeat = jiffies + wdd->timeout * HZ;
++at91sam9_wdt.c:	wdd->timeout = new_timeout;
++bcm47xx_wdt.c:	wdt->timer_set_ms(wdt, wdd->timeout * 1000);
++bcm47xx_wdt.c:	wdd->timeout = new_time;
++bcm47xx_wdt.c:	atomic_set(&wdt->soft_ticks, wdd->timeout);
++bcm47xx_wdt.c:	wdd->timeout = new_time;
++bd9576_wdt.c:		set_bit(WDOG_HW_RUNNING, &wdd->status);
++bflb_wdt.c:  dev_info(wdd->parent, "bflb_wdt_start");
++bflb_wdt.c:  dev_info(wdd->parent, "bflb_wdt_stop");
++bflb_wdt.c:  dev_info(wdd->parent, "bflb_wdt_ping");
++bflb_wdt.c:  dev_info(wdd->parent, "bflb_wdt_set_timeout (t=%i)", timeout);
++bflb_wdt.c:  wdd->timeout = timeout;
++bflb_wdt.c:  dev_info(wdd->parent, "bflb_wdt_timeleft");
++bflb_wdt.c:  return wdd->max_timeout - 1234;
++bflb_wdt.c:  wdd->info = &bflb_wdt_info;
++bflb_wdt.c:  wdd->ops = &bflb_wdt_ops;
++bflb_wdt.c:  wdd->timeout = 60; // One minute default
++bflb_wdt.c:  wdd->max_timeout = TIMER_MAX_SECS;
++bflb_wdt.c:  wdd->min_timeout = 1;
++bflb_wdt.c:  wdd->parent = &pdev->dev;
++cadence_wdt.c:	count = (wdd->timeout * (clock_f / wdt->prescaler)) /
++cadence_wdt.c:	wdd->timeout = new_time;
++da9062_wdt.c:		wdd->timeout = wdt_timeout[selector];
++da9063_wdt.c:	ret = da9063_wdt_update_timeout(da9063, wdd->timeout);
++da9063_wdt.c:		wdd->timeout = wdt_timeout[da9063_wdt_timeout_to_sel(timeout)];
++da9063_wdt.c:	wdd->info = &da9063_watchdog_info;
++da9063_wdt.c:	wdd->ops = &da9063_watchdog_ops;
++da9063_wdt.c:	wdd->min_timeout = DA9063_WDT_MIN_TIMEOUT;
++da9063_wdt.c:	wdd->max_timeout = DA9063_WDT_MAX_TIMEOUT;
++da9063_wdt.c:	wdd->min_hw_heartbeat_ms = DA9063_RESET_PROTECTION_MS;
++da9063_wdt.c:	wdd->parent = dev;
++da9063_wdt.c:	wdd->status = WATCHDOG_NOWAYOUT_INIT_STATUS;
++da9063_wdt.c:	wdd->timeout = DA9063_WDG_TIMEOUT;
++da9063_wdt.c:		wdd->timeout = timeout;
++da9063_wdt.c:	da9063_wdt_set_timeout(wdd, wdd->timeout);
++da9063_wdt.c:		da9063_wdt_update_timeout(da9063, wdd->timeout);
++da9063_wdt.c:		set_bit(WDOG_HW_RUNNING, &wdd->status);
++davinci_wdt.c:	timer_margin = (((u64)wdd->timeout * wdt_freq) & 0xffffffff);
++davinci_wdt.c:	timer_margin = (((u64)wdd->timeout * wdt_freq) >> 32);
++davinci_wdt.c:	return wdd->timeout - timer_counter;
++davinci_wdt.c:	wdd->info		= &davinci_wdt_info;
++davinci_wdt.c:	wdd->ops		= &davinci_wdt_ops;
++davinci_wdt.c:	wdd->min_timeout	= 1;
++davinci_wdt.c:	wdd->max_timeout	= MAX_HEARTBEAT;
++davinci_wdt.c:	wdd->timeout		= DEFAULT_HEARTBEAT;
++davinci_wdt.c:	wdd->parent		= dev;
++davinci_wdt.c:	dev_info(dev, "heartbeat %d sec\n", wdd->timeout);
++dw_wdt.c:		wdd->pretimeout = timeout;
++dw_wdt.c:		wdd->pretimeout = 0;
++dw_wdt.c:	 * wdd->max_hw_heartbeat_ms
++dw_wdt.c:	if (top_s * 1000 <= wdd->max_hw_heartbeat_ms)
++dw_wdt.c:		wdd->timeout = timeout * dw_wdt->rmod;
++dw_wdt.c:		wdd->timeout = top_s;
++dw_wdt.c:	dw_wdt_set_timeout(wdd, wdd->timeout);
++dw_wdt.c:	dw_wdt_set_timeout(wdd, wdd->timeout);
++dw_wdt.c:		set_bit(WDOG_HW_RUNNING, &wdd->status);
++dw_wdt.c:			sec += wdd->pretimeout;
++dw_wdt.c:	wdd->ops = &dw_wdt_ops;
++dw_wdt.c:	wdd->min_timeout = dw_wdt_get_min_timeout(dw_wdt);
++dw_wdt.c:	wdd->max_hw_heartbeat_ms = dw_wdt_get_max_timeout_ms(dw_wdt);
++dw_wdt.c:	wdd->parent = dev;
++dw_wdt.c:		wdd->timeout = dw_wdt_get_timeout(dw_wdt);
++dw_wdt.c:		set_bit(WDOG_HW_RUNNING, &wdd->status);
++dw_wdt.c:		wdd->timeout = DW_WDT_DEFAULT_SECONDS;
++ebc-c384_wdt.c:	wdd->info = &ebc_c384_wdt_info;
++ebc-c384_wdt.c:	wdd->ops = &ebc_c384_wdt_ops;
++ebc-c384_wdt.c:	wdd->timeout = WATCHDOG_TIMEOUT;
++ebc-c384_wdt.c:	wdd->min_timeout = 1;
++ebc-c384_wdt.c:	wdd->max_timeout = WATCHDOG_MAX_TIMEOUT;
++ep93xx_wdt.c:	wdd->bootstatus = (val & 0x01) ? WDIOF_CARDRESET : 0;
++ep93xx_wdt.c:	wdd->info = &ep93xx_wdt_ident;
++ep93xx_wdt.c:	wdd->ops = &ep93xx_wdt_ops;
++ep93xx_wdt.c:	wdd->min_timeout = 1;
++ep93xx_wdt.c:	wdd->max_hw_heartbeat_ms = 200;
++ep93xx_wdt.c:	wdd->parent = dev;
++ep93xx_wdt.c:	wdd->timeout = WDT_TIMEOUT;
++f71808e_wdt.c:	wdd->timeout = timeout;
++f71808e_wdt.c:		set_bit(WDOG_HW_RUNNING, &wdd->status);
++f71808e_wdt.c:	wdd->parent		= dev;
++f71808e_wdt.c:	wdd->info               = &wd->ident;
++f71808e_wdt.c:	wdd->ops                = &fintek_wdt_ops;
++f71808e_wdt.c:	wdd->min_timeout        = 1;
++f71808e_wdt.c:	wdd->max_timeout        = WATCHDOG_MAX_TIMEOUT;
++f71808e_wdt.c:		wdd->bootstatus = WDIOF_CARDRESET;
++f71808e_wdt.c:	fintek_wdt_set_timeout(wdd, wdd->timeout);
++f71808e_wdt.c:		set_bit(WDOG_HW_RUNNING, &wdd->status);
++ftwdt010_wdt.c:	ftwdt010_enable(gwdt, wdd->timeout, gwdt->has_irq);
++ftwdt010_wdt.c:	wdd->timeout = timeout;
++gpio_wdt.c:	set_bit(WDOG_HW_RUNNING, &wdd->status);
++gpio_wdt.c:		set_bit(WDOG_HW_RUNNING, &wdd->status);
++gxp-wdt.c:	writew(SECS_TO_WDOG_TICKS(wdd->timeout), drvdata->base + GXP_WDT_CNT_OFS);
++gxp-wdt.c:	wdd->timeout = timeout;
++gxp-wdt.c:	actual = min(timeout * 100, wdd->max_hw_heartbeat_ms / 10);
++hpwdt.c:	int reload = SECS_TO_TICKS(min(wdd->timeout, wdd->max_hw_heartbeat_ms/1000));
++hpwdt.c:	dev_dbg(wdd->parent, "start watchdog 0x%08x:0x%08x:0x%02x\n", wdd->timeout, reload, control);
++hpwdt.c:	int reload = SECS_TO_TICKS(min(wdd->timeout, wdd->max_hw_heartbeat_ms/1000));
++hpwdt.c:	dev_dbg(wdd->parent, "ping  watchdog 0x%08x:0x%08x\n", wdd->timeout, reload);
++hpwdt.c:	dev_dbg(wdd->parent, "set_timeout = %d\n", val);
++hpwdt.c:	wdd->timeout = val;
++hpwdt.c:	if (val <= wdd->pretimeout) {
++hpwdt.c:		dev_dbg(wdd->parent, "pretimeout < timeout. Setting to zero\n");
++hpwdt.c:		wdd->pretimeout = 0;
++hpwdt.c:	dev_dbg(wdd->parent, "set_pretimeout = %d\n", req);
++hpwdt.c:		if (val >= wdd->timeout)
++hpwdt.c:		dev_dbg(wdd->parent, "Rounding pretimeout to: %d\n", val);
++hpwdt.c:	wdd->pretimeout = val;
++i6300esb.c:	int _wdd_nowayout = test_bit(WDOG_NO_WAY_OUT, &wdd->status);
++i6300esb.c:	wdd->timeout = time;
++ie6xx_wdt.c:	wdd->timeout = t;
++ie6xx_wdt.c:	ie6xx_wdt_set_timeout(wdd, wdd->timeout);
++imx_sc_wdt.c:		watchdog_notify_pretimeout(&imx_sc_wdd->wdd);
++imx_sc_wdt.c:	wdog = &imx_sc_wdd->wdd;
++imx_sc_wdt.c:	imx_sc_wdd->wdt_notifier.notifier_call = imx_sc_wdt_notify;
++imx_sc_wdt.c:	ret = imx_scu_irq_register_notifier(&imx_sc_wdd->wdt_notifier);
++imx_sc_wdt.c:				       &imx_sc_wdd->wdt_notifier);
++imx_sc_wdt.c:	if (watchdog_active(&imx_sc_wdd->wdd))
++imx_sc_wdt.c:		imx_sc_wdt_stop(&imx_sc_wdd->wdd);
++imx_sc_wdt.c:	if (watchdog_active(&imx_sc_wdd->wdd))
++imx_sc_wdt.c:		imx_sc_wdt_start(&imx_sc_wdd->wdd);
++it87_wdt.c:	return wdt_update_timeout(wdd->timeout);
++it87_wdt.c:	wdd->timeout = t;
++ixp4xx_wdt.c:	__raw_writel(wdd->timeout * iwdt->rate,
++ixp4xx_wdt.c:	wdd->timeout = timeout;
++kempld_wdt.c:	wdd->timeout = timeout;
++kempld_wdt.c:	if (pretimeout > wdd->timeout)
++kempld_wdt.c:						wdd->timeout - pretimeout);
++kempld_wdt.c:	ret = kempld_wdt_set_timeout(wdd, wdd->timeout);
++kempld_wdt.c:	wdd->parent = dev;
++kempld_wdt.c:	wdd->info = &kempld_wdt_info;
++kempld_wdt.c:	wdd->ops = &kempld_wdt_ops;
++kempld_wdt.c:	dev_info(dev, "Watchdog registered with %ds timeout\n", wdd->timeout);
++mei_wdt.c:	wdd->timeout = wdt->timeout;
++mei_wdt.c:	wdd->timeout = timeout;
++mlx_wdt.c:	wdd->timeout = set_time;
++mtk_wdt.c:	if (timeout && !wdd->pretimeout) {
++mtk_wdt.c:		wdd->pretimeout = wdd->timeout / 2;
++mtk_wdt.c:	} else if (!timeout && wdd->pretimeout) {
++mtk_wdt.c:		wdd->pretimeout = 0;
++mtk_wdt.c:	return mtk_wdt_set_timeout(wdd, wdd->timeout);
++ni903x_wdt.c:	wdd->timeout = timeout;
++ni903x_wdt.c:	ni903x_wdd_set_timeout(wdd, wdd->timeout);
++ni903x_wdt.c:	wdd->info = &ni903x_wdd_info;
++ni903x_wdt.c:	wdd->ops = &ni903x_wdd_ops;
++ni903x_wdt.c:	wdd->min_timeout = NIWD_MIN_TIMEOUT;
++ni903x_wdt.c:	wdd->max_timeout = NIWD_MAX_TIMEOUT;
++ni903x_wdt.c:	wdd->timeout = NIWD_DEFAULT_TIMEOUT;
++ni903x_wdt.c:	wdd->parent = dev;
++nic7018_wdt.c:	wdd->timeout = nic7018_timeout(config->period, counter);
++nic7018_wdt.c:	nic7018_set_timeout(wdd, wdd->timeout);
++nic7018_wdt.c:	wdd->info = &nic7018_wdd_info;
++nic7018_wdt.c:	wdd->ops = &nic7018_wdd_ops;
++nic7018_wdt.c:	wdd->min_timeout = WDT_MIN_TIMEOUT;
++nic7018_wdt.c:	wdd->max_timeout = WDT_MAX_TIMEOUT;
++nic7018_wdt.c:	wdd->timeout = WDT_DEFAULT_TIMEOUT;
++nic7018_wdt.c:	wdd->parent = dev;
++npcm_wdt.c:	if (wdd->timeout < 2)
++npcm_wdt.c:	else if (wdd->timeout < 3)
++npcm_wdt.c:	else if (wdd->timeout < 6)
++npcm_wdt.c:	else if (wdd->timeout < 11)
++npcm_wdt.c:	else if (wdd->timeout < 22)
++npcm_wdt.c:	else if (wdd->timeout < 44)
++npcm_wdt.c:	else if (wdd->timeout < 87)
++npcm_wdt.c:	else if (wdd->timeout < 173)
++npcm_wdt.c:	else if (wdd->timeout < 688)
++npcm_wdt.c:		wdd->timeout = 1;
++npcm_wdt.c:		wdd->timeout = 2;
++npcm_wdt.c:		wdd->timeout = 5;
++npcm_wdt.c:		wdd->timeout = 10;
++npcm_wdt.c:		wdd->timeout = 21;
++npcm_wdt.c:		wdd->timeout = 43;
++npcm_wdt.c:		wdd->timeout = 86;
++npcm_wdt.c:		wdd->timeout = 172;
++npcm_wdt.c:		wdd->timeout = 687;
++npcm_wdt.c:		wdd->timeout = 2750;
++of_xilinx_wdt.c:		dev_err(wdd->parent, "Failed to enable clock\n");
++of_xilinx_wdt.c:	dev_dbg(wdd->parent, "Watchdog Started!\n");
++of_xilinx_wdt.c:	dev_dbg(wdd->parent, "Watchdog Stopped!\n");
++of_xilinx_wdt.c:	xilinx_wdt_wdd->info = &xilinx_wdt_ident;
++of_xilinx_wdt.c:	xilinx_wdt_wdd->ops = &xilinx_wdt_ops;
++of_xilinx_wdt.c:	xilinx_wdt_wdd->parent = dev;
++of_xilinx_wdt.c:		xilinx_wdt_wdd->timeout = 2 * ((1 << xdev->wdt_interval) /
++of_xilinx_wdt.c:		 xilinx_wdt_wdd->timeout);
++pic32-dmt.c:	wdd->timeout = pic32_dmt_get_timeout_secs(dmt);
++pic32-dmt.c:	if (!wdd->timeout) {
++pic32-dmt.c:	dev_info(dev, "timeout %d\n", wdd->timeout);
++pic32-dmt.c:	wdd->bootstatus = pic32_dmt_bootstatus(dmt) ? WDIOF_CARDRESET : 0;
++pic32-wdt.c:	wdd->timeout = pic32_wdt_get_timeout_secs(wdt, dev);
++pic32-wdt.c:	if (!wdd->timeout) {
++pic32-wdt.c:	dev_info(dev, "timeout %d\n", wdd->timeout);
++pic32-wdt.c:	wdd->bootstatus = pic32_wdt_bootstatus(wdt) ? WDIOF_CARDRESET : 0;
++pnx4008_wdt.c:	writel(wdd->timeout * WDOG_COUNTER_RATE, WDTIM_MATCH0(wdt_base));
++pnx4008_wdt.c:	wdd->timeout = new_timeout;
++pretimeout_noop.c:	pr_alert("watchdog%d: pretimeout event\n", wdd->id);
++pseries-wdt.c:	struct device *dev = wdd->parent;
++pseries-wdt.c:	msecs = wdd->timeout * MSEC_PER_SEC;
++pseries-wdt.c:	struct device *dev = wdd->parent;
++qcom-wdt.c:	unsigned int bark = wdd->timeout - wdd->pretimeout;
++qcom-wdt.c:	writel(wdd->timeout * wdt->rate, wdt_addr(wdt, WDT_BITE_TIME));
++qcom-wdt.c:	wdd->timeout = timeout;
++qcom-wdt.c:	wdd->pretimeout = timeout;
++rave-sp-wdt.c:		[4] = on ? wdd->timeout : 0,
++rave-sp-wdt.c:		[3] = (u8)wdd->timeout,
++rave-sp-wdt.c:		[4] = (u8)(wdd->timeout >> 8),
++rave-sp-wdt.c: * the value of 'wdd->timeout'.
++rave-sp-wdt.c:		set_bit(WDOG_HW_RUNNING, &wdd->status);
++rave-sp-wdt.c:	wdd->timeout = timeout;
++rave-sp-wdt.c:	wdd->parent      = dev;
++rave-sp-wdt.c:	wdd->info        = &rave_sp_wdt_info;
++rave-sp-wdt.c:	wdd->ops         = &rave_sp_wdt_ops;
++rave-sp-wdt.c:	wdd->min_timeout = sp_wd->variant->min_timeout;
++rave-sp-wdt.c:	wdd->max_timeout = sp_wd->variant->max_timeout;
++rave-sp-wdt.c:	wdd->status      = WATCHDOG_NOWAYOUT_INIT_STATUS;
++rave-sp-wdt.c:	wdd->timeout     = 60;
++rave-sp-wdt.c:	wdd->max_hw_heartbeat_ms = wdd->max_timeout * 1000;
++rti_wdt.c:	timer_margin = (u64)wdd->timeout * wdt->freq;
++rti_wdt.c:	wdd->min_hw_heartbeat_ms = 500 * wdd->timeout;
++rti_wdt.c:		wdd->min_hw_heartbeat_ms = 500 * heartbeat;
++rti_wdt.c:		wdd->min_hw_heartbeat_ms = 750 * heartbeat;
++rti_wdt.c:		wdd->min_hw_heartbeat_ms = 875 * heartbeat;
++rti_wdt.c:		wdd->min_hw_heartbeat_ms = 935 * heartbeat;
++rti_wdt.c:		wdd->min_hw_heartbeat_ms = 969 * heartbeat;
++rti_wdt.c:	wdd->info = &rti_wdt_info;
++rti_wdt.c:	wdd->ops = &rti_wdt_ops;
++rti_wdt.c:	wdd->min_timeout = 1;
++rti_wdt.c:	wdd->max_hw_heartbeat_ms = (WDT_PRELOAD_MAX << WDT_PRELOAD_SHIFT) /
++rti_wdt.c:	wdd->parent = dev;
++rti_wdt.c:		set_bit(WDOG_HW_RUNNING, &wdd->status);
++s3c2410_wdt.c:	wdd->timeout = (count * divisor) / freq;
++sama5d4_wdt.c:		wdd->timeout = timeout;
++sama5d4_wdt.c:	wdd->timeout = timeout;
++sama5d4_wdt.c:	wdd->timeout = WDT_DEFAULT_TIMEOUT;
++sama5d4_wdt.c:	wdd->info = &sama5d4_wdt_info;
++sama5d4_wdt.c:	wdd->ops = &sama5d4_wdt_ops;
++sama5d4_wdt.c:	wdd->min_timeout = MIN_WDT_TIMEOUT;
++sama5d4_wdt.c:	wdd->max_timeout = MAX_WDT_TIMEOUT;
++sama5d4_wdt.c:		 wdd->timeout, nowayout);
++sbsa_gwdt.c:	wdd->timeout = timeout;
++sbsa_gwdt.c:	wdd->parent = dev;
++sbsa_gwdt.c:	wdd->info = &sbsa_gwdt_info;
++sbsa_gwdt.c:	wdd->ops = &sbsa_gwdt_ops;
++sbsa_gwdt.c:	wdd->min_timeout = 1;
++sbsa_gwdt.c:	wdd->timeout = DEFAULT_TIMEOUT;
++sbsa_gwdt.c:		wdd->max_hw_heartbeat_ms = U32_MAX / gwdt->clk * 1000;
++sbsa_gwdt.c:		wdd->max_hw_heartbeat_ms = GENMASK_ULL(47, 0) / gwdt->clk * 1000;
++sbsa_gwdt.c:		wdd->bootstatus |= WDIOF_CARDRESET;
++sbsa_gwdt.c:		set_bit(WDOG_HW_RUNNING, &wdd->status);
++sbsa_gwdt.c:		wdd->max_hw_heartbeat_ms *= 2;
++sbsa_gwdt.c:	sbsa_gwdt_set_timeout(wdd, wdd->timeout);
++sbsa_gwdt.c:		 wdd->timeout, gwdt->clk, action,
++simatic-ipc-wdt.c:	wdd->timeout = wd_timeout_table[timeout_idx];
++sl28cpld_wdt.c:	wdd->timeout = timeout;
++sl28cpld_wdt.c:	wdd->parent = &pdev->dev;
++sl28cpld_wdt.c:	wdd->info = &sl28cpld_wdt_info;
++sl28cpld_wdt.c:	wdd->ops = &sl28cpld_wdt_ops;
++sl28cpld_wdt.c:	wdd->min_timeout = 1;
++sl28cpld_wdt.c:	wdd->max_timeout = 255;
++sl28cpld_wdt.c:		wdd->timeout = val;
++sl28cpld_wdt.c:		wdd->timeout = WDT_DEFAULT_TIMEOUT;
++sl28cpld_wdt.c:	sl28cpld_wdt_set_timeout(wdd, wdd->timeout);
++sl28cpld_wdt.c:		set_bit(WDOG_HW_RUNNING, &wdd->status);
++sl28cpld_wdt.c:		 wdd->timeout, nowayout ? ", nowayout" : "");
++sp5100_tco.c:	wdd->timeout = t;
++sp5100_tco.c:	struct device *dev = wdd->parent;
++sp5100_tco.c:		wdd->bootstatus = WDIOF_CARDRESET;
++sp5100_tco.c:	tco_timer_set_timeout(wdd, wdd->timeout);
++sp5100_tco.c:	wdd->parent = dev;
++sp5100_tco.c:	wdd->info = &sp5100_tco_wdt_info;
++sp5100_tco.c:	wdd->ops = &sp5100_tco_wdt_ops;
++sp5100_tco.c:	wdd->timeout = WATCHDOG_HEARTBEAT;
++sp5100_tco.c:	wdd->min_timeout = 1;
++sp5100_tco.c:	wdd->max_timeout = 0xffff;
++sp5100_tco.c:		 wdd->timeout, nowayout);
++sp805_wdt.c:	wdd->timeout = div_u64((load + 1) * 2 + (rate / 2), rate);
++sprd_wdt.c:	ret = sprd_wdt_load_value(wdt, wdd->timeout, wdd->pretimeout);
++sprd_wdt.c:	set_bit(WDOG_HW_RUNNING, &wdd->status);
++sprd_wdt.c:	if (timeout == wdd->timeout)
++sprd_wdt.c:	wdd->timeout = timeout;
++sprd_wdt.c:	return sprd_wdt_load_value(wdt, timeout, wdd->pretimeout);
++sprd_wdt.c:	if (new_pretimeout < wdd->min_timeout)
++sprd_wdt.c:	wdd->pretimeout = new_pretimeout;
++sprd_wdt.c:	return sprd_wdt_load_value(wdt, wdd->timeout, new_pretimeout);
++st_lpc_wdt.c:	wdd->timeout = timeout;
++st_lpc_wdt.c:	st_wdog_load_timer(st_wdog, wdd->timeout);
++stm32_iwdg.c:	dev_dbg(wdd->parent, "%s\n", __func__);
++stm32_iwdg.c:	tout = clamp_t(unsigned int, wdd->timeout,
++stm32_iwdg.c:		       wdd->min_timeout, wdd->max_hw_heartbeat_ms / 1000);
++stm32_iwdg.c:		dev_err(wdd->parent, "Fail to set prescaler, reload regs\n");
++stm32_iwdg.c:	dev_dbg(wdd->parent, "%s\n", __func__);
++stm32_iwdg.c:	dev_dbg(wdd->parent, "%s timeout: %d sec\n", __func__, timeout);
++stm32_iwdg.c:	wdd->timeout = timeout;
++stm32_iwdg.c:	wdd->parent = dev;
++stm32_iwdg.c:	wdd->info = &stm32_iwdg_info;
++stm32_iwdg.c:	wdd->ops = &stm32_iwdg_ops;
++stm32_iwdg.c:	wdd->min_timeout = DIV_ROUND_UP((RLR_MIN + 1) * PR_MIN, wdt->rate);
++stm32_iwdg.c:	wdd->max_hw_heartbeat_ms = ((RLR_MAX + 1) * wdt->data->max_prescaler *
++stm32_iwdg.c:		set_bit(WDOG_HW_RUNNING, &wdd->status);
++stmp3xxx_rtc_wdt.c:	pdata->wdt_set_timeout(dev->parent, wdd->timeout * WDOG_TICK_RATE);
++stmp3xxx_rtc_wdt.c:	wdd->timeout = new_timeout;
++stpmic1_wdt.c:	wdd->timeout = timeout;
++sun4v_wdt.c:	hverr = sun4v_mach_set_watchdog(wdd->timeout * 1000, NULL);
++sun4v_wdt.c:	wdd->timeout = timeout;
++tegra_wdt.c:	      (wdd->timeout << WDT_CFG_PERIOD_SHIFT) |
++tegra_wdt.c:	wdd->timeout = timeout;
++tegra_wdt.c:	return (((3 - exp) * wdd->timeout) + count) / 4;
++tegra_wdt.c:	wdd->timeout = heartbeat;
++tegra_wdt.c:	wdd->info = &tegra_wdt_info;
++tegra_wdt.c:	wdd->ops = &tegra_wdt_ops;
++tegra_wdt.c:	wdd->min_timeout = MIN_WDT_TIMEOUT;
++tegra_wdt.c:	wdd->max_timeout = MAX_WDT_TIMEOUT;
++tegra_wdt.c:	wdd->parent = dev;
++tqmx86_wdt.c:	wdd->timeout = t;
++ts4800_wdt.c:	wdd->timeout = ts4800_wdt_map[i].timeout;
++ts4800_wdt.c:	wdd->parent = dev;
++ts4800_wdt.c:	wdd->info = &ts4800_wdt_info;
++ts4800_wdt.c:	wdd->ops = &ts4800_wdt_ops;
++ts4800_wdt.c:	wdd->min_timeout = ts4800_wdt_map[0].timeout;
++ts4800_wdt.c:	wdd->max_timeout = ts4800_wdt_map[MAX_TIMEOUT_INDEX].timeout;
++ts4800_wdt.c:	if (!wdd->timeout)
++ts4800_wdt.c:		wdd->timeout = wdd->max_timeout;
++ts4800_wdt.c:	ts4800_wdt_set_timeout(wdd, wdd->timeout);
++ts4800_wdt.c:		 wdd->timeout, nowayout);
++ts72xx_wdt.c:	wdd->timeout = to;
++ts72xx_wdt.c:	wdd->info = &ts72xx_wdt_ident;
++ts72xx_wdt.c:	wdd->ops = &ts72xx_wdt_ops;
++ts72xx_wdt.c:	wdd->min_timeout = 1;
++ts72xx_wdt.c:	wdd->max_hw_heartbeat_ms = 8000;
++ts72xx_wdt.c:	wdd->parent = dev;
++ts72xx_wdt.c:	wdd->timeout = TS72XX_WDT_DEFAULT_TIMEOUT;
++via_wdt.c:	next_heartbeat = jiffies + wdd->timeout * HZ;
++via_wdt.c:	writel(wdd->timeout, wdt_mem + VIA_WDT_COUNT);
++via_wdt.c:	wdd->timeout = new_timeout;
++watchdog_core.c:	list_add_tail(&wdd->deferred,
++watchdog_core.c:	if (!wdd->max_hw_heartbeat_ms && wdd->min_timeout > wdd->max_timeout) {
++watchdog_core.c:		wdd->min_timeout = 0;
++watchdog_core.c:		wdd->max_timeout = 0;
++watchdog_core.c:	const char *dev_str = wdd->parent ? dev_name(wdd->parent) :
++watchdog_core.c:			      (const char *)wdd->info->identity;
++watchdog_core.c:			wdd->timeout = timeout_parm;
++watchdog_core.c:			wdd->timeout = t;
++watchdog_core.c:	if (ret < 0 && wdd->timeout)
++watchdog_core.c:			wdd->timeout);
++watchdog_core.c:			ret = wdd->ops->stop(wdd);
++watchdog_core.c:	ret = wdd->ops->restart(wdd, action, data);
++watchdog_core.c: * If a wdd->ops->restart function is provided when watchdog_register_device is
++watchdog_core.c:	wdd->restart_nb.priority = priority;
++watchdog_core.c:	if (wdd == NULL || wdd->info == NULL || wdd->ops == NULL)
++watchdog_core.c:	if (!wdd->ops->start || (!wdd->ops->stop && !wdd->max_hw_heartbeat_ms))
++watchdog_core.c:	if (wdd->parent) {
++watchdog_core.c:		ret = of_alias_get_id(wdd->parent->of_node, "watchdog");
++watchdog_core.c:	wdd->id = id;
++watchdog_core.c:		wdd->id = id;
++watchdog_core.c:			set_bit(WDOG_STOP_ON_REBOOT, &wdd->status);
++watchdog_core.c:			clear_bit(WDOG_STOP_ON_REBOOT, &wdd->status);
++watchdog_core.c:	if (test_bit(WDOG_STOP_ON_REBOOT, &wdd->status)) {
++watchdog_core.c:		if (!wdd->ops->stop)
++watchdog_core.c:			pr_warn("watchdog%d: stop_on_reboot not supported\n", wdd->id);
++watchdog_core.c:			wdd->reboot_nb.notifier_call = watchdog_reboot_notifier;
++watchdog_core.c:			ret = register_reboot_notifier(&wdd->reboot_nb);
++watchdog_core.c:					wdd->id, ret);
++watchdog_core.c:	if (wdd->ops->restart) {
++watchdog_core.c:		wdd->restart_nb.notifier_call = watchdog_restart_notifier;
++watchdog_core.c:		ret = register_restart_handler(&wdd->restart_nb);
++watchdog_core.c:				wdd->id, ret);
++watchdog_core.c:	if (test_bit(WDOG_NO_PING_ON_SUSPEND, &wdd->status)) {
++watchdog_core.c:		wdd->pm_nb.notifier_call = watchdog_pm_notifier;
++watchdog_core.c:		ret = register_pm_notifier(&wdd->pm_nb);
++watchdog_core.c:				wdd->id, ret);
++watchdog_core.c:		dev_str = wdd->parent ? dev_name(wdd->parent) :
++watchdog_core.c:			  (const char *)wdd->info->identity;
++watchdog_core.c:	if (wdd->ops->restart)
++watchdog_core.c:		unregister_restart_handler(&wdd->restart_nb);
++watchdog_core.c:	if (test_bit(WDOG_STOP_ON_REBOOT, &wdd->status))
++watchdog_core.c:		unregister_reboot_notifier(&wdd->reboot_nb);
++watchdog_core.c:	ida_simple_remove(&watchdog_ida, wdd->id);
++watchdog_core.c:		list_del(&wdd->deferred);
++watchdog_core.h:	return wdd->info->options & WDIOF_PRETIMEOUT ||
++watchdog_dev.c:	unsigned int hm = wdd->max_hw_heartbeat_ms;
++watchdog_dev.c:	unsigned int t = wdd->timeout * 1000;
++watchdog_dev.c:	struct watchdog_core_data *wd_data = wdd->wd_data;
++watchdog_dev.c:	unsigned int timeout_ms = wdd->timeout * 1000;
++watchdog_dev.c:	hw_heartbeat_ms = min_not_zero(timeout_ms, wdd->max_hw_heartbeat_ms);
++watchdog_dev.c:	 * To ensure that the watchdog times out wdd->timeout seconds
++watchdog_dev.c:	struct watchdog_core_data *wd_data = wdd->wd_data;
++watchdog_dev.c:	struct watchdog_core_data *wd_data = wdd->wd_data;
++watchdog_dev.c:				       ms_to_ktime(wdd->min_hw_heartbeat_ms));
++watchdog_dev.c:	if (wdd->ops->ping) {
++watchdog_dev.c:		err = wdd->ops->ping(wdd);  /* ping the watchdog */
++watchdog_dev.c:		err = wdd->ops->start(wdd); /* restart watchdog */
++watchdog_dev.c:	struct watchdog_core_data *wd_data = wdd->wd_data;
++watchdog_dev.c:	struct watchdog_core_data *wd_data = wdd->wd_data;
++watchdog_dev.c:	if (watchdog_hw_running(wdd) && wdd->ops->ping) {
++watchdog_dev.c:			set_bit(WDOG_ACTIVE, &wdd->status);
++watchdog_dev.c:		err = wdd->ops->start(wdd);
++watchdog_dev.c:			set_bit(WDOG_ACTIVE, &wdd->status);
++watchdog_dev.c:	if (test_bit(WDOG_NO_WAY_OUT, &wdd->status)) {
++watchdog_dev.c:			wdd->id);
++watchdog_dev.c:	if (wdd->ops->stop) {
++watchdog_dev.c:		clear_bit(WDOG_HW_RUNNING, &wdd->status);
++watchdog_dev.c:		err = wdd->ops->stop(wdd);
++watchdog_dev.c:		set_bit(WDOG_HW_RUNNING, &wdd->status);
++watchdog_dev.c:		clear_bit(WDOG_ACTIVE, &wdd->status);
++watchdog_dev.c:	struct watchdog_core_data *wd_data = wdd->wd_data;
++watchdog_dev.c:	if (wdd->ops->status)
++watchdog_dev.c:		status = wdd->ops->status(wdd);
++watchdog_dev.c:		status = wdd->bootstatus & (WDIOF_CARDRESET |
++watchdog_dev.c:	if (!(wdd->info->options & WDIOF_SETTIMEOUT))
++watchdog_dev.c:	if (wdd->ops->set_timeout) {
++watchdog_dev.c:		err = wdd->ops->set_timeout(wdd, timeout);
++watchdog_dev.c:		wdd->timeout = timeout;
++watchdog_dev.c:		if (wdd->pretimeout >= wdd->timeout)
++watchdog_dev.c:			wdd->pretimeout = 0;
++watchdog_dev.c:	if (wdd->ops->set_pretimeout && (wdd->info->options & WDIOF_PRETIMEOUT))
++watchdog_dev.c:		err = wdd->ops->set_pretimeout(wdd, timeout);
++watchdog_dev.c:		wdd->pretimeout = timeout;
++watchdog_dev.c:	if (!wdd->ops->get_timeleft)
++watchdog_dev.c:	*timeleft = wdd->ops->get_timeleft(wdd);
++watchdog_dev.c:						  &wdd->status));
++watchdog_dev.c:	if (test_bit(WDOG_NO_WAY_OUT, &wdd->status) && !value)
++watchdog_dev.c:	struct watchdog_core_data *wd_data = wdd->wd_data;
++watchdog_dev.c:	return sysfs_emit(buf, "%u\n", wdd->bootstatus);
++watchdog_dev.c:	struct watchdog_core_data *wd_data = wdd->wd_data;
++watchdog_dev.c:	return sysfs_emit(buf, "%u\n", wdd->timeout);
++watchdog_dev.c:	return sysfs_emit(buf, "%u\n", wdd->min_timeout);
++watchdog_dev.c:	return sysfs_emit(buf, "%u\n", wdd->max_timeout);
++watchdog_dev.c:	return sysfs_emit(buf, "%u\n", wdd->pretimeout);
++watchdog_dev.c:	return sysfs_emit(buf, "%s\n", wdd->info->identity);
++watchdog_dev.c:	if (attr == &dev_attr_timeleft.attr && !wdd->ops->get_timeleft)
++watchdog_dev.c:	if (!wdd->ops->ioctl)
++watchdog_dev.c:	return wdd->ops->ioctl(wdd, cmd, arg);
++watchdog_dev.c:		err = copy_to_user(argp, wdd->info,
++watchdog_dev.c:		err = put_user(wdd->bootstatus, p);
++watchdog_dev.c:		if (!(wdd->info->options & WDIOF_KEEPALIVEPING)) {
++watchdog_dev.c:		if (wdd->timeout == 0) {
++watchdog_dev.c:		err = put_user(wdd->timeout, p);
++watchdog_dev.c:		err = put_user(wdd->pretimeout, p);
++watchdog_dev.c:	if (!hw_running && !try_module_get(wdd->ops->owner)) {
++watchdog_dev.c:	module_put(wd_data->wdd->ops->owner);
++watchdog_dev.c:		 !(wdd->info->options & WDIOF_MAGICCLOSE))
++watchdog_dev.c:		pr_crit("watchdog%d: watchdog did not stop!\n", wdd->id);
++watchdog_dev.c:	wdd->wd_data = wd_data;
++watchdog_dev.c:	wd_data->dev.devt = MKDEV(MAJOR(watchdog_devt), wdd->id);
++watchdog_dev.c:	wd_data->dev.parent = wdd->parent;
++watchdog_dev.c:	wd_data->dev.groups = wdd->groups;
++watchdog_dev.c:	err = dev_set_name(&wd_data->dev, "watchdog%d", wdd->id);
++watchdog_dev.c:	if (wdd->id == 0) {
++watchdog_dev.c:		watchdog_miscdev.parent = wdd->parent;
++watchdog_dev.c:				wdd->info->identity, WATCHDOG_MINOR, err);
++watchdog_dev.c:					wdd->info->identity);
++watchdog_dev.c:			wdd->id,  MAJOR(watchdog_devt), wdd->id);
++watchdog_dev.c:		if (wdd->id == 0) {
++watchdog_dev.c:	wd_data->cdev.owner = wdd->ops->owner;
++watchdog_dev.c:		__module_get(wdd->ops->owner);
++watchdog_dev.c:				wdd->id);
++watchdog_dev.c:	struct watchdog_core_data *wd_data = wdd->wd_data;
++watchdog_dev.c:	if (wdd->id == 0) {
++watchdog_dev.c:	    test_bit(WDOG_STOP_ON_UNREGISTER, &wdd->status)) {
++watchdog_dev.c:	wdd->wd_data = NULL;
++watchdog_dev.c:	wd_data = wdd->wd_data;
++watchdog_dev.c:	struct watchdog_core_data *wd_data = wdd->wd_data;
++watchdog_dev.c:	if (!wdd->wd_data)
++watchdog_dev.c:	struct watchdog_core_data *wd_data = wdd->wd_data;
++watchdog_dev.c:	if (!wdd->wd_data)
++watchdog_hrtimer_pretimeout.c:	struct watchdog_core_data *wd_data = wdd->wd_data;
++watchdog_hrtimer_pretimeout.c:	if (!(wdd->info->options & WDIOF_PRETIMEOUT) &&
++watchdog_hrtimer_pretimeout.c:	    !watchdog_pretimeout_invalid(wdd, wdd->pretimeout))
++watchdog_hrtimer_pretimeout.c:		hrtimer_start(&wdd->wd_data->pretimeout_timer,
++watchdog_hrtimer_pretimeout.c:			      ktime_set(wdd->timeout - wdd->pretimeout, 0),
++watchdog_hrtimer_pretimeout.c:		hrtimer_cancel(&wdd->wd_data->pretimeout_timer);
++watchdog_hrtimer_pretimeout.c:	hrtimer_cancel(&wdd->wd_data->pretimeout_timer);
++watchdog_pretimeout.c:/* The spinlock protects default_gov, wdd->gov and pretimeout_list */
++watchdog_pretimeout.c:	if (wdd->gov)
++watchdog_pretimeout.c:		count = sysfs_emit(buf, "%s\n", wdd->gov->name);
++watchdog_pretimeout.c:	wdd->gov = priv->gov;
++watchdog_pretimeout.c:	if (!wdd->gov) {
++watchdog_pretimeout.c:	wdd->gov->pretimeout(wdd);
++watchdog_pretimeout.c:			if (!p->wdd->gov)
++watchdog_pretimeout.c:				p->wdd->gov = default_gov;
++watchdog_pretimeout.c:		if (p->wdd->gov == gov)
++watchdog_pretimeout.c:			p->wdd->gov = default_gov;
++watchdog_pretimeout.c:	wdd->gov = default_gov;
++watchdog_pretimeout.c:	wdd->gov = NULL;
++wdat_wdt.c:		wdd->timeout = timeout;
++xen_wdt.c:	wdt.timeout = wdd->timeout;
++xen_wdt.c:	return ktime_get_seconds() + wdd->timeout;
++ziirave_wdt.c:	struct i2c_client *client = to_i2c_client(wdd->parent);
++ziirave_wdt.c:	struct i2c_client *client = to_i2c_client(wdd->parent);
++ziirave_wdt.c:	struct i2c_client *client = to_i2c_client(wdd->parent);
++ziirave_wdt.c:		wdd->timeout = timeout;
++ziirave_wdt.c:	struct i2c_client *client = to_i2c_client(wdd->parent);
++ziirave_wdt.c:	struct i2c_client *client = to_i2c_client(wdd->parent);
++ziirave_wdt.c:	struct i2c_client *client = to_i2c_client(wdd->parent);
++ziirave_wdt.c:	struct i2c_client *client = to_i2c_client(wdd->parent);
++ziirave_wdt.c:	struct i2c_client *client = to_i2c_client(wdd->parent);
++ziirave_wdt.c:	struct i2c_client *client = to_i2c_client(wdd->parent);
+diff --git a/drivers/watchdog/timeout_max b/drivers/watchdog/timeout_max
+new file mode 100644
+index 000000000000..05af144d06bc
+--- /dev/null
++++ b/drivers/watchdog/timeout_max
+@@ -0,0 +1,520 @@
++advantech_ec_wdt.c:	wdd->timeout = t;
++advantech_ec_wdt.c:	adv_ec_wdt_set_timeout(wdd, wdd->timeout);
++apple_wdt.c:	wdd->timeout = s;
++arm_smc_wdt.c:		wdd->timeout = timeout;
++arm_smc_wdt.c:	wdd->info = &smcwd_info;
++arm_smc_wdt.c:		wdd->ops = &smcwd_ops;
++arm_smc_wdt.c:		wdd->ops = &smcwd_timeleft_ops;
++arm_smc_wdt.c:	wdd->timeout = res.a2;
++arm_smc_wdt.c:	wdd->max_timeout = res.a2;
++arm_smc_wdt.c:	wdd->min_timeout = res.a1;
++arm_smc_wdt.c:	wdd->parent = &pdev->dev;
++arm_smc_wdt.c:	err = smcwd_set_timeout(wdd, wdd->timeout);
++arm_smc_wdt.c:		 wdd->timeout, nowayout);
++asm9260_wdt.c:	counter = wdd->timeout * priv->wdt_freq;
++asm9260_wdt.c:	wdd->timeout = to;
++asm9260_wdt.c:	wdd->info = &asm9260_wdt_ident;
++asm9260_wdt.c:	wdd->ops = &asm9260_wdt_ops;
++asm9260_wdt.c:	wdd->min_timeout = 1;
++asm9260_wdt.c:	wdd->max_timeout = BM_WDTC_MAX(priv->wdt_freq);
++asm9260_wdt.c:	wdd->parent = dev;
++asm9260_wdt.c:	wdd->timeout = ASM9260_WDT_DEFAULT_TIMEOUT;
++asm9260_wdt.c:		 wdd->timeout, mode_name[priv->mode]);
++aspeed_wdt.c:	aspeed_wdt_enable(wdt, wdd->timeout * WDT_RATE_1MHZ);
++aspeed_wdt.c:	wdd->timeout = timeout;
++aspeed_wdt.c:	actual = min(timeout, wdd->max_hw_heartbeat_ms / 1000);
++aspeed_wdt.c:	wdd->pretimeout = pretimeout;
++at91sam9_wdt.c:	wdt->next_heartbeat = jiffies + wdd->timeout * HZ;
++at91sam9_wdt.c:	wdd->timeout = new_timeout;
++bcm47xx_wdt.c:	wdt->timer_set_ms(wdt, wdd->timeout * 1000);
++bcm47xx_wdt.c:	wdd->timeout = new_time;
++bcm47xx_wdt.c:	atomic_set(&wdt->soft_ticks, wdd->timeout);
++bcm47xx_wdt.c:	wdd->timeout = new_time;
++bd9576_wdt.c:		set_bit(WDOG_HW_RUNNING, &wdd->status);
++bflb_wdt.c:  dev_info(wdd->parent, "bflb_wdt_start");
++bflb_wdt.c:  dev_info(wdd->parent, "bflb_wdt_stop");
++bflb_wdt.c:  dev_info(wdd->parent, "bflb_wdt_ping");
++bflb_wdt.c:  dev_info(wdd->parent, "bflb_wdt_set_timeout (t=%i)", timeout);
++bflb_wdt.c:  wdd->timeout = timeout;
++bflb_wdt.c:  dev_info(wdd->parent, "bflb_wdt_timeleft");
++bflb_wdt.c:  return wdd->max_timeout - 1234;
++bflb_wdt.c:  wdd->info = &bflb_wdt_info;
++bflb_wdt.c:  wdd->ops = &bflb_wdt_ops;
++bflb_wdt.c:  wdd->timeout = 60; // One minute default
++bflb_wdt.c:  wdd->max_timeout = TIMER_MAX_SECS;
++bflb_wdt.c:  wdd->min_timeout = 1;
++bflb_wdt.c:  wdd->parent = &pdev->dev;
++cadence_wdt.c:	count = (wdd->timeout * (clock_f / wdt->prescaler)) /
++cadence_wdt.c:	wdd->timeout = new_time;
++da9062_wdt.c:		wdd->timeout = wdt_timeout[selector];
++da9063_wdt.c:	ret = da9063_wdt_update_timeout(da9063, wdd->timeout);
++da9063_wdt.c:		wdd->timeout = wdt_timeout[da9063_wdt_timeout_to_sel(timeout)];
++da9063_wdt.c:	wdd->info = &da9063_watchdog_info;
++da9063_wdt.c:	wdd->ops = &da9063_watchdog_ops;
++da9063_wdt.c:	wdd->min_timeout = DA9063_WDT_MIN_TIMEOUT;
++da9063_wdt.c:	wdd->max_timeout = DA9063_WDT_MAX_TIMEOUT;
++da9063_wdt.c:	wdd->min_hw_heartbeat_ms = DA9063_RESET_PROTECTION_MS;
++da9063_wdt.c:	wdd->parent = dev;
++da9063_wdt.c:	wdd->status = WATCHDOG_NOWAYOUT_INIT_STATUS;
++da9063_wdt.c:	wdd->timeout = DA9063_WDG_TIMEOUT;
++da9063_wdt.c:		wdd->timeout = timeout;
++da9063_wdt.c:	da9063_wdt_set_timeout(wdd, wdd->timeout);
++da9063_wdt.c:		da9063_wdt_update_timeout(da9063, wdd->timeout);
++da9063_wdt.c:		set_bit(WDOG_HW_RUNNING, &wdd->status);
++davinci_wdt.c:	timer_margin = (((u64)wdd->timeout * wdt_freq) & 0xffffffff);
++davinci_wdt.c:	timer_margin = (((u64)wdd->timeout * wdt_freq) >> 32);
++davinci_wdt.c:	return wdd->timeout - timer_counter;
++davinci_wdt.c:	wdd->info		= &davinci_wdt_info;
++davinci_wdt.c:	wdd->ops		= &davinci_wdt_ops;
++davinci_wdt.c:	wdd->min_timeout	= 1;
++davinci_wdt.c:	wdd->max_timeout	= MAX_HEARTBEAT;
++davinci_wdt.c:	wdd->timeout		= DEFAULT_HEARTBEAT;
++davinci_wdt.c:	wdd->parent		= dev;
++davinci_wdt.c:	dev_info(dev, "heartbeat %d sec\n", wdd->timeout);
++dw_wdt.c:		wdd->pretimeout = timeout;
++dw_wdt.c:		wdd->pretimeout = 0;
++dw_wdt.c:	 * wdd->max_hw_heartbeat_ms
++dw_wdt.c:	if (top_s * 1000 <= wdd->max_hw_heartbeat_ms)
++dw_wdt.c:		wdd->timeout = timeout * dw_wdt->rmod;
++dw_wdt.c:		wdd->timeout = top_s;
++dw_wdt.c:	dw_wdt_set_timeout(wdd, wdd->timeout);
++dw_wdt.c:	dw_wdt_set_timeout(wdd, wdd->timeout);
++dw_wdt.c:		set_bit(WDOG_HW_RUNNING, &wdd->status);
++dw_wdt.c:			sec += wdd->pretimeout;
++dw_wdt.c:	wdd->ops = &dw_wdt_ops;
++dw_wdt.c:	wdd->min_timeout = dw_wdt_get_min_timeout(dw_wdt);
++dw_wdt.c:	wdd->max_hw_heartbeat_ms = dw_wdt_get_max_timeout_ms(dw_wdt);
++dw_wdt.c:	wdd->parent = dev;
++dw_wdt.c:		wdd->timeout = dw_wdt_get_timeout(dw_wdt);
++dw_wdt.c:		set_bit(WDOG_HW_RUNNING, &wdd->status);
++dw_wdt.c:		wdd->timeout = DW_WDT_DEFAULT_SECONDS;
++ebc-c384_wdt.c:	wdd->info = &ebc_c384_wdt_info;
++ebc-c384_wdt.c:	wdd->ops = &ebc_c384_wdt_ops;
++ebc-c384_wdt.c:	wdd->timeout = WATCHDOG_TIMEOUT;
++ebc-c384_wdt.c:	wdd->min_timeout = 1;
++ebc-c384_wdt.c:	wdd->max_timeout = WATCHDOG_MAX_TIMEOUT;
++ep93xx_wdt.c:	wdd->bootstatus = (val & 0x01) ? WDIOF_CARDRESET : 0;
++ep93xx_wdt.c:	wdd->info = &ep93xx_wdt_ident;
++ep93xx_wdt.c:	wdd->ops = &ep93xx_wdt_ops;
++ep93xx_wdt.c:	wdd->min_timeout = 1;
++ep93xx_wdt.c:	wdd->max_hw_heartbeat_ms = 200;
++ep93xx_wdt.c:	wdd->parent = dev;
++ep93xx_wdt.c:	wdd->timeout = WDT_TIMEOUT;
++f71808e_wdt.c:	wdd->timeout = timeout;
++f71808e_wdt.c:		set_bit(WDOG_HW_RUNNING, &wdd->status);
++f71808e_wdt.c:	wdd->parent		= dev;
++f71808e_wdt.c:	wdd->info               = &wd->ident;
++f71808e_wdt.c:	wdd->ops                = &fintek_wdt_ops;
++f71808e_wdt.c:	wdd->min_timeout        = 1;
++f71808e_wdt.c:	wdd->max_timeout        = WATCHDOG_MAX_TIMEOUT;
++f71808e_wdt.c:		wdd->bootstatus = WDIOF_CARDRESET;
++f71808e_wdt.c:	fintek_wdt_set_timeout(wdd, wdd->timeout);
++f71808e_wdt.c:		set_bit(WDOG_HW_RUNNING, &wdd->status);
++ftwdt010_wdt.c:	ftwdt010_enable(gwdt, wdd->timeout, gwdt->has_irq);
++ftwdt010_wdt.c:	wdd->timeout = timeout;
++gpio_wdt.c:	set_bit(WDOG_HW_RUNNING, &wdd->status);
++gpio_wdt.c:		set_bit(WDOG_HW_RUNNING, &wdd->status);
++gxp-wdt.c:	writew(SECS_TO_WDOG_TICKS(wdd->timeout), drvdata->base + GXP_WDT_CNT_OFS);
++gxp-wdt.c:	wdd->timeout = timeout;
++gxp-wdt.c:	actual = min(timeout * 100, wdd->max_hw_heartbeat_ms / 10);
++hpwdt.c:	int reload = SECS_TO_TICKS(min(wdd->timeout, wdd->max_hw_heartbeat_ms/1000));
++hpwdt.c:	dev_dbg(wdd->parent, "start watchdog 0x%08x:0x%08x:0x%02x\n", wdd->timeout, reload, control);
++hpwdt.c:	int reload = SECS_TO_TICKS(min(wdd->timeout, wdd->max_hw_heartbeat_ms/1000));
++hpwdt.c:	dev_dbg(wdd->parent, "ping  watchdog 0x%08x:0x%08x\n", wdd->timeout, reload);
++hpwdt.c:	dev_dbg(wdd->parent, "set_timeout = %d\n", val);
++hpwdt.c:	wdd->timeout = val;
++hpwdt.c:	if (val <= wdd->pretimeout) {
++hpwdt.c:		dev_dbg(wdd->parent, "pretimeout < timeout. Setting to zero\n");
++hpwdt.c:		wdd->pretimeout = 0;
++hpwdt.c:	dev_dbg(wdd->parent, "set_pretimeout = %d\n", req);
++hpwdt.c:		if (val >= wdd->timeout)
++hpwdt.c:		dev_dbg(wdd->parent, "Rounding pretimeout to: %d\n", val);
++hpwdt.c:	wdd->pretimeout = val;
++i6300esb.c:	int _wdd_nowayout = test_bit(WDOG_NO_WAY_OUT, &wdd->status);
++i6300esb.c:	wdd->timeout = time;
++ie6xx_wdt.c:	wdd->timeout = t;
++ie6xx_wdt.c:	ie6xx_wdt_set_timeout(wdd, wdd->timeout);
++imx_sc_wdt.c:		watchdog_notify_pretimeout(&imx_sc_wdd->wdd);
++imx_sc_wdt.c:	wdog = &imx_sc_wdd->wdd;
++imx_sc_wdt.c:	imx_sc_wdd->wdt_notifier.notifier_call = imx_sc_wdt_notify;
++imx_sc_wdt.c:	ret = imx_scu_irq_register_notifier(&imx_sc_wdd->wdt_notifier);
++imx_sc_wdt.c:				       &imx_sc_wdd->wdt_notifier);
++imx_sc_wdt.c:	if (watchdog_active(&imx_sc_wdd->wdd))
++imx_sc_wdt.c:		imx_sc_wdt_stop(&imx_sc_wdd->wdd);
++imx_sc_wdt.c:	if (watchdog_active(&imx_sc_wdd->wdd))
++imx_sc_wdt.c:		imx_sc_wdt_start(&imx_sc_wdd->wdd);
++it87_wdt.c:	return wdt_update_timeout(wdd->timeout);
++it87_wdt.c:	wdd->timeout = t;
++ixp4xx_wdt.c:	__raw_writel(wdd->timeout * iwdt->rate,
++ixp4xx_wdt.c:	wdd->timeout = timeout;
++kempld_wdt.c:	wdd->timeout = timeout;
++kempld_wdt.c:	if (pretimeout > wdd->timeout)
++kempld_wdt.c:						wdd->timeout - pretimeout);
++kempld_wdt.c:	ret = kempld_wdt_set_timeout(wdd, wdd->timeout);
++kempld_wdt.c:	wdd->parent = dev;
++kempld_wdt.c:	wdd->info = &kempld_wdt_info;
++kempld_wdt.c:	wdd->ops = &kempld_wdt_ops;
++kempld_wdt.c:	dev_info(dev, "Watchdog registered with %ds timeout\n", wdd->timeout);
++mei_wdt.c:	wdd->timeout = wdt->timeout;
++mei_wdt.c:	wdd->timeout = timeout;
++mlx_wdt.c:	wdd->timeout = set_time;
++mtk_wdt.c:	if (timeout && !wdd->pretimeout) {
++mtk_wdt.c:		wdd->pretimeout = wdd->timeout / 2;
++mtk_wdt.c:	} else if (!timeout && wdd->pretimeout) {
++mtk_wdt.c:		wdd->pretimeout = 0;
++mtk_wdt.c:	return mtk_wdt_set_timeout(wdd, wdd->timeout);
++ni903x_wdt.c:	wdd->timeout = timeout;
++ni903x_wdt.c:	ni903x_wdd_set_timeout(wdd, wdd->timeout);
++ni903x_wdt.c:	wdd->info = &ni903x_wdd_info;
++ni903x_wdt.c:	wdd->ops = &ni903x_wdd_ops;
++ni903x_wdt.c:	wdd->min_timeout = NIWD_MIN_TIMEOUT;
++ni903x_wdt.c:	wdd->max_timeout = NIWD_MAX_TIMEOUT;
++ni903x_wdt.c:	wdd->timeout = NIWD_DEFAULT_TIMEOUT;
++ni903x_wdt.c:	wdd->parent = dev;
++nic7018_wdt.c:	wdd->timeout = nic7018_timeout(config->period, counter);
++nic7018_wdt.c:	nic7018_set_timeout(wdd, wdd->timeout);
++nic7018_wdt.c:	wdd->info = &nic7018_wdd_info;
++nic7018_wdt.c:	wdd->ops = &nic7018_wdd_ops;
++nic7018_wdt.c:	wdd->min_timeout = WDT_MIN_TIMEOUT;
++nic7018_wdt.c:	wdd->max_timeout = WDT_MAX_TIMEOUT;
++nic7018_wdt.c:	wdd->timeout = WDT_DEFAULT_TIMEOUT;
++nic7018_wdt.c:	wdd->parent = dev;
++npcm_wdt.c:	if (wdd->timeout < 2)
++npcm_wdt.c:	else if (wdd->timeout < 3)
++npcm_wdt.c:	else if (wdd->timeout < 6)
++npcm_wdt.c:	else if (wdd->timeout < 11)
++npcm_wdt.c:	else if (wdd->timeout < 22)
++npcm_wdt.c:	else if (wdd->timeout < 44)
++npcm_wdt.c:	else if (wdd->timeout < 87)
++npcm_wdt.c:	else if (wdd->timeout < 173)
++npcm_wdt.c:	else if (wdd->timeout < 688)
++npcm_wdt.c:		wdd->timeout = 1;
++npcm_wdt.c:		wdd->timeout = 2;
++npcm_wdt.c:		wdd->timeout = 5;
++npcm_wdt.c:		wdd->timeout = 10;
++npcm_wdt.c:		wdd->timeout = 21;
++npcm_wdt.c:		wdd->timeout = 43;
++npcm_wdt.c:		wdd->timeout = 86;
++npcm_wdt.c:		wdd->timeout = 172;
++npcm_wdt.c:		wdd->timeout = 687;
++npcm_wdt.c:		wdd->timeout = 2750;
++of_xilinx_wdt.c:		dev_err(wdd->parent, "Failed to enable clock\n");
++of_xilinx_wdt.c:	dev_dbg(wdd->parent, "Watchdog Started!\n");
++of_xilinx_wdt.c:	dev_dbg(wdd->parent, "Watchdog Stopped!\n");
++of_xilinx_wdt.c:	xilinx_wdt_wdd->info = &xilinx_wdt_ident;
++of_xilinx_wdt.c:	xilinx_wdt_wdd->ops = &xilinx_wdt_ops;
++of_xilinx_wdt.c:	xilinx_wdt_wdd->parent = dev;
++of_xilinx_wdt.c:		xilinx_wdt_wdd->timeout = 2 * ((1 << xdev->wdt_interval) /
++of_xilinx_wdt.c:		 xilinx_wdt_wdd->timeout);
++pic32-dmt.c:	wdd->timeout = pic32_dmt_get_timeout_secs(dmt);
++pic32-dmt.c:	if (!wdd->timeout) {
++pic32-dmt.c:	dev_info(dev, "timeout %d\n", wdd->timeout);
++pic32-dmt.c:	wdd->bootstatus = pic32_dmt_bootstatus(dmt) ? WDIOF_CARDRESET : 0;
++pic32-wdt.c:	wdd->timeout = pic32_wdt_get_timeout_secs(wdt, dev);
++pic32-wdt.c:	if (!wdd->timeout) {
++pic32-wdt.c:	dev_info(dev, "timeout %d\n", wdd->timeout);
++pic32-wdt.c:	wdd->bootstatus = pic32_wdt_bootstatus(wdt) ? WDIOF_CARDRESET : 0;
++pnx4008_wdt.c:	writel(wdd->timeout * WDOG_COUNTER_RATE, WDTIM_MATCH0(wdt_base));
++pnx4008_wdt.c:	wdd->timeout = new_timeout;
++pretimeout_noop.c:	pr_alert("watchdog%d: pretimeout event\n", wdd->id);
++pseries-wdt.c:	struct device *dev = wdd->parent;
++pseries-wdt.c:	msecs = wdd->timeout * MSEC_PER_SEC;
++pseries-wdt.c:	struct device *dev = wdd->parent;
++qcom-wdt.c:	unsigned int bark = wdd->timeout - wdd->pretimeout;
++qcom-wdt.c:	writel(wdd->timeout * wdt->rate, wdt_addr(wdt, WDT_BITE_TIME));
++qcom-wdt.c:	wdd->timeout = timeout;
++qcom-wdt.c:	wdd->pretimeout = timeout;
++rave-sp-wdt.c:		[4] = on ? wdd->timeout : 0,
++rave-sp-wdt.c:		[3] = (u8)wdd->timeout,
++rave-sp-wdt.c:		[4] = (u8)(wdd->timeout >> 8),
++rave-sp-wdt.c: * the value of 'wdd->timeout'.
++rave-sp-wdt.c:		set_bit(WDOG_HW_RUNNING, &wdd->status);
++rave-sp-wdt.c:	wdd->timeout = timeout;
++rave-sp-wdt.c:	wdd->parent      = dev;
++rave-sp-wdt.c:	wdd->info        = &rave_sp_wdt_info;
++rave-sp-wdt.c:	wdd->ops         = &rave_sp_wdt_ops;
++rave-sp-wdt.c:	wdd->min_timeout = sp_wd->variant->min_timeout;
++rave-sp-wdt.c:	wdd->max_timeout = sp_wd->variant->max_timeout;
++rave-sp-wdt.c:	wdd->status      = WATCHDOG_NOWAYOUT_INIT_STATUS;
++rave-sp-wdt.c:	wdd->timeout     = 60;
++rave-sp-wdt.c:	wdd->max_hw_heartbeat_ms = wdd->max_timeout * 1000;
++rti_wdt.c:	timer_margin = (u64)wdd->timeout * wdt->freq;
++rti_wdt.c:	wdd->min_hw_heartbeat_ms = 500 * wdd->timeout;
++rti_wdt.c:		wdd->min_hw_heartbeat_ms = 500 * heartbeat;
++rti_wdt.c:		wdd->min_hw_heartbeat_ms = 750 * heartbeat;
++rti_wdt.c:		wdd->min_hw_heartbeat_ms = 875 * heartbeat;
++rti_wdt.c:		wdd->min_hw_heartbeat_ms = 935 * heartbeat;
++rti_wdt.c:		wdd->min_hw_heartbeat_ms = 969 * heartbeat;
++rti_wdt.c:	wdd->info = &rti_wdt_info;
++rti_wdt.c:	wdd->ops = &rti_wdt_ops;
++rti_wdt.c:	wdd->min_timeout = 1;
++rti_wdt.c:	wdd->max_hw_heartbeat_ms = (WDT_PRELOAD_MAX << WDT_PRELOAD_SHIFT) /
++rti_wdt.c:	wdd->parent = dev;
++rti_wdt.c:		set_bit(WDOG_HW_RUNNING, &wdd->status);
++s3c2410_wdt.c:	wdd->timeout = (count * divisor) / freq;
++sama5d4_wdt.c:		wdd->timeout = timeout;
++sama5d4_wdt.c:	wdd->timeout = timeout;
++sama5d4_wdt.c:	wdd->timeout = WDT_DEFAULT_TIMEOUT;
++sama5d4_wdt.c:	wdd->info = &sama5d4_wdt_info;
++sama5d4_wdt.c:	wdd->ops = &sama5d4_wdt_ops;
++sama5d4_wdt.c:	wdd->min_timeout = MIN_WDT_TIMEOUT;
++sama5d4_wdt.c:	wdd->max_timeout = MAX_WDT_TIMEOUT;
++sama5d4_wdt.c:		 wdd->timeout, nowayout);
++sbsa_gwdt.c:	wdd->timeout = timeout;
++sbsa_gwdt.c:	wdd->parent = dev;
++sbsa_gwdt.c:	wdd->info = &sbsa_gwdt_info;
++sbsa_gwdt.c:	wdd->ops = &sbsa_gwdt_ops;
++sbsa_gwdt.c:	wdd->min_timeout = 1;
++sbsa_gwdt.c:	wdd->timeout = DEFAULT_TIMEOUT;
++sbsa_gwdt.c:		wdd->max_hw_heartbeat_ms = U32_MAX / gwdt->clk * 1000;
++sbsa_gwdt.c:		wdd->max_hw_heartbeat_ms = GENMASK_ULL(47, 0) / gwdt->clk * 1000;
++sbsa_gwdt.c:		wdd->bootstatus |= WDIOF_CARDRESET;
++sbsa_gwdt.c:		set_bit(WDOG_HW_RUNNING, &wdd->status);
++sbsa_gwdt.c:		wdd->max_hw_heartbeat_ms *= 2;
++sbsa_gwdt.c:	sbsa_gwdt_set_timeout(wdd, wdd->timeout);
++sbsa_gwdt.c:		 wdd->timeout, gwdt->clk, action,
++simatic-ipc-wdt.c:	wdd->timeout = wd_timeout_table[timeout_idx];
++sl28cpld_wdt.c:	wdd->timeout = timeout;
++sl28cpld_wdt.c:	wdd->parent = &pdev->dev;
++sl28cpld_wdt.c:	wdd->info = &sl28cpld_wdt_info;
++sl28cpld_wdt.c:	wdd->ops = &sl28cpld_wdt_ops;
++sl28cpld_wdt.c:	wdd->min_timeout = 1;
++sl28cpld_wdt.c:	wdd->max_timeout = 255;
++sl28cpld_wdt.c:		wdd->timeout = val;
++sl28cpld_wdt.c:		wdd->timeout = WDT_DEFAULT_TIMEOUT;
++sl28cpld_wdt.c:	sl28cpld_wdt_set_timeout(wdd, wdd->timeout);
++sl28cpld_wdt.c:		set_bit(WDOG_HW_RUNNING, &wdd->status);
++sl28cpld_wdt.c:		 wdd->timeout, nowayout ? ", nowayout" : "");
++sp5100_tco.c:	wdd->timeout = t;
++sp5100_tco.c:	struct device *dev = wdd->parent;
++sp5100_tco.c:		wdd->bootstatus = WDIOF_CARDRESET;
++sp5100_tco.c:	tco_timer_set_timeout(wdd, wdd->timeout);
++sp5100_tco.c:	wdd->parent = dev;
++sp5100_tco.c:	wdd->info = &sp5100_tco_wdt_info;
++sp5100_tco.c:	wdd->ops = &sp5100_tco_wdt_ops;
++sp5100_tco.c:	wdd->timeout = WATCHDOG_HEARTBEAT;
++sp5100_tco.c:	wdd->min_timeout = 1;
++sp5100_tco.c:	wdd->max_timeout = 0xffff;
++sp5100_tco.c:		 wdd->timeout, nowayout);
++sp805_wdt.c:	wdd->timeout = div_u64((load + 1) * 2 + (rate / 2), rate);
++sprd_wdt.c:	ret = sprd_wdt_load_value(wdt, wdd->timeout, wdd->pretimeout);
++sprd_wdt.c:	set_bit(WDOG_HW_RUNNING, &wdd->status);
++sprd_wdt.c:	if (timeout == wdd->timeout)
++sprd_wdt.c:	wdd->timeout = timeout;
++sprd_wdt.c:	return sprd_wdt_load_value(wdt, timeout, wdd->pretimeout);
++sprd_wdt.c:	if (new_pretimeout < wdd->min_timeout)
++sprd_wdt.c:	wdd->pretimeout = new_pretimeout;
++sprd_wdt.c:	return sprd_wdt_load_value(wdt, wdd->timeout, new_pretimeout);
++st_lpc_wdt.c:	wdd->timeout = timeout;
++st_lpc_wdt.c:	st_wdog_load_timer(st_wdog, wdd->timeout);
++stm32_iwdg.c:	dev_dbg(wdd->parent, "%s\n", __func__);
++stm32_iwdg.c:	tout = clamp_t(unsigned int, wdd->timeout,
++stm32_iwdg.c:		       wdd->min_timeout, wdd->max_hw_heartbeat_ms / 1000);
++stm32_iwdg.c:		dev_err(wdd->parent, "Fail to set prescaler, reload regs\n");
++stm32_iwdg.c:	dev_dbg(wdd->parent, "%s\n", __func__);
++stm32_iwdg.c:	dev_dbg(wdd->parent, "%s timeout: %d sec\n", __func__, timeout);
++stm32_iwdg.c:	wdd->timeout = timeout;
++stm32_iwdg.c:	wdd->parent = dev;
++stm32_iwdg.c:	wdd->info = &stm32_iwdg_info;
++stm32_iwdg.c:	wdd->ops = &stm32_iwdg_ops;
++stm32_iwdg.c:	wdd->min_timeout = DIV_ROUND_UP((RLR_MIN + 1) * PR_MIN, wdt->rate);
++stm32_iwdg.c:	wdd->max_hw_heartbeat_ms = ((RLR_MAX + 1) * wdt->data->max_prescaler *
++stm32_iwdg.c:		set_bit(WDOG_HW_RUNNING, &wdd->status);
++stmp3xxx_rtc_wdt.c:	pdata->wdt_set_timeout(dev->parent, wdd->timeout * WDOG_TICK_RATE);
++stmp3xxx_rtc_wdt.c:	wdd->timeout = new_timeout;
++stpmic1_wdt.c:	wdd->timeout = timeout;
++sun4v_wdt.c:	hverr = sun4v_mach_set_watchdog(wdd->timeout * 1000, NULL);
++sun4v_wdt.c:	wdd->timeout = timeout;
++tegra_wdt.c:	      (wdd->timeout << WDT_CFG_PERIOD_SHIFT) |
++tegra_wdt.c:	wdd->timeout = timeout;
++tegra_wdt.c:	return (((3 - exp) * wdd->timeout) + count) / 4;
++tegra_wdt.c:	wdd->timeout = heartbeat;
++tegra_wdt.c:	wdd->info = &tegra_wdt_info;
++tegra_wdt.c:	wdd->ops = &tegra_wdt_ops;
++tegra_wdt.c:	wdd->min_timeout = MIN_WDT_TIMEOUT;
++tegra_wdt.c:	wdd->max_timeout = MAX_WDT_TIMEOUT;
++tegra_wdt.c:	wdd->parent = dev;
++tqmx86_wdt.c:	wdd->timeout = t;
++ts4800_wdt.c:	wdd->timeout = ts4800_wdt_map[i].timeout;
++ts4800_wdt.c:	wdd->parent = dev;
++ts4800_wdt.c:	wdd->info = &ts4800_wdt_info;
++ts4800_wdt.c:	wdd->ops = &ts4800_wdt_ops;
++ts4800_wdt.c:	wdd->min_timeout = ts4800_wdt_map[0].timeout;
++ts4800_wdt.c:	wdd->max_timeout = ts4800_wdt_map[MAX_TIMEOUT_INDEX].timeout;
++ts4800_wdt.c:	if (!wdd->timeout)
++ts4800_wdt.c:		wdd->timeout = wdd->max_timeout;
++ts4800_wdt.c:	ts4800_wdt_set_timeout(wdd, wdd->timeout);
++ts4800_wdt.c:		 wdd->timeout, nowayout);
++ts72xx_wdt.c:	wdd->timeout = to;
++ts72xx_wdt.c:	wdd->info = &ts72xx_wdt_ident;
++ts72xx_wdt.c:	wdd->ops = &ts72xx_wdt_ops;
++ts72xx_wdt.c:	wdd->min_timeout = 1;
++ts72xx_wdt.c:	wdd->max_hw_heartbeat_ms = 8000;
++ts72xx_wdt.c:	wdd->parent = dev;
++ts72xx_wdt.c:	wdd->timeout = TS72XX_WDT_DEFAULT_TIMEOUT;
++via_wdt.c:	next_heartbeat = jiffies + wdd->timeout * HZ;
++via_wdt.c:	writel(wdd->timeout, wdt_mem + VIA_WDT_COUNT);
++via_wdt.c:	wdd->timeout = new_timeout;
++watchdog_core.c:	list_add_tail(&wdd->deferred,
++watchdog_core.c:	if (!wdd->max_hw_heartbeat_ms && wdd->min_timeout > wdd->max_timeout) {
++watchdog_core.c:		wdd->min_timeout = 0;
++watchdog_core.c:		wdd->max_timeout = 0;
++watchdog_core.c:	const char *dev_str = wdd->parent ? dev_name(wdd->parent) :
++watchdog_core.c:			      (const char *)wdd->info->identity;
++watchdog_core.c:			wdd->timeout = timeout_parm;
++watchdog_core.c:			wdd->timeout = t;
++watchdog_core.c:	if (ret < 0 && wdd->timeout)
++watchdog_core.c:			wdd->timeout);
++watchdog_core.c:			ret = wdd->ops->stop(wdd);
++watchdog_core.c:	ret = wdd->ops->restart(wdd, action, data);
++watchdog_core.c: * If a wdd->ops->restart function is provided when watchdog_register_device is
++watchdog_core.c:	wdd->restart_nb.priority = priority;
++watchdog_core.c:	if (wdd == NULL || wdd->info == NULL || wdd->ops == NULL)
++watchdog_core.c:	if (!wdd->ops->start || (!wdd->ops->stop && !wdd->max_hw_heartbeat_ms))
++watchdog_core.c:	if (wdd->parent) {
++watchdog_core.c:		ret = of_alias_get_id(wdd->parent->of_node, "watchdog");
++watchdog_core.c:	wdd->id = id;
++watchdog_core.c:		wdd->id = id;
++watchdog_core.c:			set_bit(WDOG_STOP_ON_REBOOT, &wdd->status);
++watchdog_core.c:			clear_bit(WDOG_STOP_ON_REBOOT, &wdd->status);
++watchdog_core.c:	if (test_bit(WDOG_STOP_ON_REBOOT, &wdd->status)) {
++watchdog_core.c:		if (!wdd->ops->stop)
++watchdog_core.c:			pr_warn("watchdog%d: stop_on_reboot not supported\n", wdd->id);
++watchdog_core.c:			wdd->reboot_nb.notifier_call = watchdog_reboot_notifier;
++watchdog_core.c:			ret = register_reboot_notifier(&wdd->reboot_nb);
++watchdog_core.c:					wdd->id, ret);
++watchdog_core.c:	if (wdd->ops->restart) {
++watchdog_core.c:		wdd->restart_nb.notifier_call = watchdog_restart_notifier;
++watchdog_core.c:		ret = register_restart_handler(&wdd->restart_nb);
++watchdog_core.c:				wdd->id, ret);
++watchdog_core.c:	if (test_bit(WDOG_NO_PING_ON_SUSPEND, &wdd->status)) {
++watchdog_core.c:		wdd->pm_nb.notifier_call = watchdog_pm_notifier;
++watchdog_core.c:		ret = register_pm_notifier(&wdd->pm_nb);
++watchdog_core.c:				wdd->id, ret);
++watchdog_core.c:		dev_str = wdd->parent ? dev_name(wdd->parent) :
++watchdog_core.c:			  (const char *)wdd->info->identity;
++watchdog_core.c:	if (wdd->ops->restart)
++watchdog_core.c:		unregister_restart_handler(&wdd->restart_nb);
++watchdog_core.c:	if (test_bit(WDOG_STOP_ON_REBOOT, &wdd->status))
++watchdog_core.c:		unregister_reboot_notifier(&wdd->reboot_nb);
++watchdog_core.c:	ida_simple_remove(&watchdog_ida, wdd->id);
++watchdog_core.c:		list_del(&wdd->deferred);
++watchdog_core.h:	return wdd->info->options & WDIOF_PRETIMEOUT ||
++watchdog_dev.c:	unsigned int hm = wdd->max_hw_heartbeat_ms;
++watchdog_dev.c:	unsigned int t = wdd->timeout * 1000;
++watchdog_dev.c:	struct watchdog_core_data *wd_data = wdd->wd_data;
++watchdog_dev.c:	unsigned int timeout_ms = wdd->timeout * 1000;
++watchdog_dev.c:	hw_heartbeat_ms = min_not_zero(timeout_ms, wdd->max_hw_heartbeat_ms);
++watchdog_dev.c:	 * To ensure that the watchdog times out wdd->timeout seconds
++watchdog_dev.c:	struct watchdog_core_data *wd_data = wdd->wd_data;
++watchdog_dev.c:	struct watchdog_core_data *wd_data = wdd->wd_data;
++watchdog_dev.c:				       ms_to_ktime(wdd->min_hw_heartbeat_ms));
++watchdog_dev.c:	if (wdd->ops->ping) {
++watchdog_dev.c:		err = wdd->ops->ping(wdd);  /* ping the watchdog */
++watchdog_dev.c:		err = wdd->ops->start(wdd); /* restart watchdog */
++watchdog_dev.c:	struct watchdog_core_data *wd_data = wdd->wd_data;
++watchdog_dev.c:	struct watchdog_core_data *wd_data = wdd->wd_data;
++watchdog_dev.c:	if (watchdog_hw_running(wdd) && wdd->ops->ping) {
++watchdog_dev.c:			set_bit(WDOG_ACTIVE, &wdd->status);
++watchdog_dev.c:		err = wdd->ops->start(wdd);
++watchdog_dev.c:			set_bit(WDOG_ACTIVE, &wdd->status);
++watchdog_dev.c:	if (test_bit(WDOG_NO_WAY_OUT, &wdd->status)) {
++watchdog_dev.c:			wdd->id);
++watchdog_dev.c:	if (wdd->ops->stop) {
++watchdog_dev.c:		clear_bit(WDOG_HW_RUNNING, &wdd->status);
++watchdog_dev.c:		err = wdd->ops->stop(wdd);
++watchdog_dev.c:		set_bit(WDOG_HW_RUNNING, &wdd->status);
++watchdog_dev.c:		clear_bit(WDOG_ACTIVE, &wdd->status);
++watchdog_dev.c:	struct watchdog_core_data *wd_data = wdd->wd_data;
++watchdog_dev.c:	if (wdd->ops->status)
++watchdog_dev.c:		status = wdd->ops->status(wdd);
++watchdog_dev.c:		status = wdd->bootstatus & (WDIOF_CARDRESET |
++watchdog_dev.c:	if (!(wdd->info->options & WDIOF_SETTIMEOUT))
++watchdog_dev.c:	if (wdd->ops->set_timeout) {
++watchdog_dev.c:		err = wdd->ops->set_timeout(wdd, timeout);
++watchdog_dev.c:		wdd->timeout = timeout;
++watchdog_dev.c:		if (wdd->pretimeout >= wdd->timeout)
++watchdog_dev.c:			wdd->pretimeout = 0;
++watchdog_dev.c:	if (wdd->ops->set_pretimeout && (wdd->info->options & WDIOF_PRETIMEOUT))
++watchdog_dev.c:		err = wdd->ops->set_pretimeout(wdd, timeout);
++watchdog_dev.c:		wdd->pretimeout = timeout;
++watchdog_dev.c:	if (!wdd->ops->get_timeleft)
++watchdog_dev.c:	*timeleft = wdd->ops->get_timeleft(wdd);
++watchdog_dev.c:						  &wdd->status));
++watchdog_dev.c:	if (test_bit(WDOG_NO_WAY_OUT, &wdd->status) && !value)
++watchdog_dev.c:	struct watchdog_core_data *wd_data = wdd->wd_data;
++watchdog_dev.c:	return sysfs_emit(buf, "%u\n", wdd->bootstatus);
++watchdog_dev.c:	struct watchdog_core_data *wd_data = wdd->wd_data;
++watchdog_dev.c:	return sysfs_emit(buf, "%u\n", wdd->timeout);
++watchdog_dev.c:	return sysfs_emit(buf, "%u\n", wdd->min_timeout);
++watchdog_dev.c:	return sysfs_emit(buf, "%u\n", wdd->max_timeout);
++watchdog_dev.c:	return sysfs_emit(buf, "%u\n", wdd->pretimeout);
++watchdog_dev.c:	return sysfs_emit(buf, "%s\n", wdd->info->identity);
++watchdog_dev.c:	if (attr == &dev_attr_timeleft.attr && !wdd->ops->get_timeleft)
++watchdog_dev.c:	if (!wdd->ops->ioctl)
++watchdog_dev.c:	return wdd->ops->ioctl(wdd, cmd, arg);
++watchdog_dev.c:		err = copy_to_user(argp, wdd->info,
++watchdog_dev.c:		err = put_user(wdd->bootstatus, p);
++watchdog_dev.c:		if (!(wdd->info->options & WDIOF_KEEPALIVEPING)) {
++watchdog_dev.c:		if (wdd->timeout == 0) {
++watchdog_dev.c:		err = put_user(wdd->timeout, p);
++watchdog_dev.c:		err = put_user(wdd->pretimeout, p);
++watchdog_dev.c:	if (!hw_running && !try_module_get(wdd->ops->owner)) {
++watchdog_dev.c:	module_put(wd_data->wdd->ops->owner);
++watchdog_dev.c:		 !(wdd->info->options & WDIOF_MAGICCLOSE))
++watchdog_dev.c:		pr_crit("watchdog%d: watchdog did not stop!\n", wdd->id);
++watchdog_dev.c:	wdd->wd_data = wd_data;
++watchdog_dev.c:	wd_data->dev.devt = MKDEV(MAJOR(watchdog_devt), wdd->id);
++watchdog_dev.c:	wd_data->dev.parent = wdd->parent;
++watchdog_dev.c:	wd_data->dev.groups = wdd->groups;
++watchdog_dev.c:	err = dev_set_name(&wd_data->dev, "watchdog%d", wdd->id);
++watchdog_dev.c:	if (wdd->id == 0) {
++watchdog_dev.c:		watchdog_miscdev.parent = wdd->parent;
++watchdog_dev.c:				wdd->info->identity, WATCHDOG_MINOR, err);
++watchdog_dev.c:					wdd->info->identity);
++watchdog_dev.c:			wdd->id,  MAJOR(watchdog_devt), wdd->id);
++watchdog_dev.c:		if (wdd->id == 0) {
++watchdog_dev.c:	wd_data->cdev.owner = wdd->ops->owner;
++watchdog_dev.c:		__module_get(wdd->ops->owner);
++watchdog_dev.c:				wdd->id);
++watchdog_dev.c:	struct watchdog_core_data *wd_data = wdd->wd_data;
++watchdog_dev.c:	if (wdd->id == 0) {
++watchdog_dev.c:	    test_bit(WDOG_STOP_ON_UNREGISTER, &wdd->status)) {
++watchdog_dev.c:	wdd->wd_data = NULL;
++watchdog_dev.c:	wd_data = wdd->wd_data;
++watchdog_dev.c:	struct watchdog_core_data *wd_data = wdd->wd_data;
++watchdog_dev.c:	if (!wdd->wd_data)
++watchdog_dev.c:	struct watchdog_core_data *wd_data = wdd->wd_data;
++watchdog_dev.c:	if (!wdd->wd_data)
++watchdog_hrtimer_pretimeout.c:	struct watchdog_core_data *wd_data = wdd->wd_data;
++watchdog_hrtimer_pretimeout.c:	if (!(wdd->info->options & WDIOF_PRETIMEOUT) &&
++watchdog_hrtimer_pretimeout.c:	    !watchdog_pretimeout_invalid(wdd, wdd->pretimeout))
++watchdog_hrtimer_pretimeout.c:		hrtimer_start(&wdd->wd_data->pretimeout_timer,
++watchdog_hrtimer_pretimeout.c:			      ktime_set(wdd->timeout - wdd->pretimeout, 0),
++watchdog_hrtimer_pretimeout.c:		hrtimer_cancel(&wdd->wd_data->pretimeout_timer);
++watchdog_hrtimer_pretimeout.c:	hrtimer_cancel(&wdd->wd_data->pretimeout_timer);
++watchdog_pretimeout.c:/* The spinlock protects default_gov, wdd->gov and pretimeout_list */
++watchdog_pretimeout.c:	if (wdd->gov)
++watchdog_pretimeout.c:		count = sysfs_emit(buf, "%s\n", wdd->gov->name);
++watchdog_pretimeout.c:	wdd->gov = priv->gov;
++watchdog_pretimeout.c:	if (!wdd->gov) {
++watchdog_pretimeout.c:	wdd->gov->pretimeout(wdd);
++watchdog_pretimeout.c:			if (!p->wdd->gov)
++watchdog_pretimeout.c:				p->wdd->gov = default_gov;
++watchdog_pretimeout.c:		if (p->wdd->gov == gov)
++watchdog_pretimeout.c:			p->wdd->gov = default_gov;
++watchdog_pretimeout.c:	wdd->gov = default_gov;
++watchdog_pretimeout.c:	wdd->gov = NULL;
++wdat_wdt.c:		wdd->timeout = timeout;
++xen_wdt.c:	wdt.timeout = wdd->timeout;
++xen_wdt.c:	return ktime_get_seconds() + wdd->timeout;
++ziirave_wdt.c:	struct i2c_client *client = to_i2c_client(wdd->parent);
++ziirave_wdt.c:	struct i2c_client *client = to_i2c_client(wdd->parent);
++ziirave_wdt.c:	struct i2c_client *client = to_i2c_client(wdd->parent);
++ziirave_wdt.c:		wdd->timeout = timeout;
++ziirave_wdt.c:	struct i2c_client *client = to_i2c_client(wdd->parent);
++ziirave_wdt.c:	struct i2c_client *client = to_i2c_client(wdd->parent);
++ziirave_wdt.c:	struct i2c_client *client = to_i2c_client(wdd->parent);
++ziirave_wdt.c:	struct i2c_client *client = to_i2c_client(wdd->parent);
++ziirave_wdt.c:	struct i2c_client *client = to_i2c_client(wdd->parent);
++ziirave_wdt.c:	struct i2c_client *client = to_i2c_client(wdd->parent);
+-- 
+2.34.1
+
