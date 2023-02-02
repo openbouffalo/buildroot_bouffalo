@@ -28,16 +28,16 @@ diff --git a/arch/riscv/boot/dts/bouffalolab/bl808.dtsi b/arch/riscv/boot/dts/bo
 index dd795667dea6..7c38e685d922 100644
 --- a/arch/riscv/boot/dts/bouffalolab/bl808.dtsi
 +++ b/arch/riscv/boot/dts/bouffalolab/bl808.dtsi
-@@ -140,5 +140,11 @@ plic: interrupt-controller@e0000000 {
- 			#interrupt-cells = <2>;
- 			riscv,ndev = <64>;
- 		};
-+
+@@ -127,5 +122,11 @@
+                 	                      <&cpu0_intc 7>;
+ 	        };
+ 
 +                wdt: wdt@2000a500 {
 +                        compatible = "bflb,bflb808-wdt";
 +                        reg = <0x2000a500 0x100>;
 +                        status = "disabled";
 +                };
++
  	};
  };
 diff --git a/drivers/watchdog/Kconfig b/drivers/watchdog/Kconfig
