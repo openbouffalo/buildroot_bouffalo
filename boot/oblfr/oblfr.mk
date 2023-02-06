@@ -4,7 +4,7 @@
 #
 ################################################################################
 
-OBLFR_VERSION = f1883aa78ce6d2c672f9824cc7747088263c756e
+OBLFR_VERSION = e36316fa13633caff765330258fc365b5b258020
 OBLFR_SITE = $(call github,openbouffalo,OBLFR,$(OBLFR_VERSION))
 OBLFR_INSTALL_IMAGES = YES
 OBLFR_INSTALL_TARGET = NO
