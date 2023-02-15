@@ -55,6 +55,7 @@ jobs:
         cd buildroot
         make BR2_EXTERNAL=$BR_BOUFFALO_OVERLAY_PATH ${{ matrix.target }}
         make
+        make sdk
         make ccache-stats
     - name: Pack
       run: |
@@ -73,6 +74,7 @@ jobs:
         echo "OPENSBI=${{ github.workspace }}/buildroot/output/images/fw_jump.bin" >> $GITHUB_ENV
         echo "LOWLOAD=${{ github.workspace }}/buildroot/output/images/*_lowload_bl808_*.bin" >> $GITHUB_ENV
         echo "WHOLEBIN=${{ github.workspace }}/buildroot/output/images/whole_img_linux.bin" >> $GITHUB_ENV
+        echo "BRSDK=${{ github.workspace }}/buildroot/output/images/riscv*.tar.gz" >> $GITHUB_ENV
     - name: Upload package
       uses: actions/upload-artifact@master
       with:
@@ -84,6 +86,13 @@ jobs:
           ${{env.OPENSBI}}
           ${{env.LOWLOAD}}
           ${{env.WHOLEBIN}}
+    - name: Upload sdk
+      if: matrix.target == 'pine64_ox64_full_defconfig'
+      uses: actions/upload-artifact@master
+      with:
+        name: buildroot-sdk
+        path: |
+          ${{env.BRSDK}}
 
   createimages:
     strategy:
@@ -135,9 +144,11 @@ jobs:
         run: |
           ls -lah
           ls -lah linux-buildroot-*/*.tar.gz
+          ls -lah buildroot-sdk/*.tar.gz
       - name: publish artifacts
         uses: softprops/action-gh-release@v1
         with:
           append_body: true
           files: |
             linux-buildroot-*/*.tar.gz
+            buildroot-sdk/*.tar.gz
