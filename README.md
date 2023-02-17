@@ -1,4 +1,4 @@
-# Buildroot overlay for Bouffalo chips
+# Buildroot overlay for BL808 based boards
 
 ## Usage
 
@@ -19,6 +19,12 @@ Prebuilt images are available on the releases page (for tested images) or develo
 Two images are currently build - A minimal image - `sdcard-pine64_0x64_defconfig` and a more complete image - `sdcard-pine64_0x64_full_defconfig`
 
 The SD card images are configured with a 1Gb Swap Partition, and will resize the rootfs partition on first boot to the full size of the SD card.
+
+Inside the downloads you will find the following files:
+* m0_lowload_bl808_m0.bin - This firmware runs on M0 and forwards interupts to the D0 for several peripherals
+* d0_lowload_bl808_d0.bin - This is a very basic bootloader that loads opensbi, the kernel and dts files into ram
+* pine64-ox64-firmware.bin/sispeed-m1s-firmware.bin - A image containing OpenSBI, the Kernel and DTS files for Pine64 OX64 and SiSpeed M1S Dock
+* sdcard-*.tar.xz - A tarball containing the rootfs for the image to be flashed to the SD card
 
 ### Development images
 Latest Development Build Result:
@@ -45,7 +51,7 @@ Download your prefered image above and extract the files.
 - D0 Group[Group1] Image Addr [0x58000000] [PATH to d0_low_load_bl808_d0.bin]
 - Click 'Create & Download' and wait until it's done
 - Switch to [IOT] page
-- Enable 'Single Download', set Address with 0xD2000, choose [PATH to whole_image_linux.bin]
+- Enable 'Single Download', set Address with 0xD2000, choose [PATH to pine64-ox64-firmware.bin/sispeed-m1s-firmware.bin] (depending on your board)
 - Click 'Create & Download' again and wait until it's done
 - flash the sdcard-pine64-*.img.xz to your SD card (you can use dd (after uncompressing) or https://github.com/balena-io/etcher)
 - Serial Console access:
@@ -53,3 +59,15 @@ Download your prefered image above and extract the files.
     + UART RX is physical pin 31/GPIO 17.
     + Baud 2000000.
 - Enjoy!
+
+## Compiling Applications for BL808 based boards
+
+Buildroot provides a "SDK" for the baords. This is a tarball containing the cross compiler and sysroot for the target board. This can be used to compile applications for the board. Please refer to https://github.com/openbouffalo/buildroot_bouffalo/wiki/Building-Programs-outside-of-buildroot for basic instructions (or consult the [buildroot documentation](https://buildroot.org/downloads/manual/using-buildroot-toolchain.txt))
+
+## Current Status of Linux
+
+Please refer to the projects tab for the status of drivers in development.
+
+## Disucssions
+
+Please use the github discussions for any questions or issues.
