@@ -2,6 +2,7 @@
 # Description: Merge the Kernel, DTB, and OpenSBI into a single binary
 # From @BBBSnowball 
 import struct
+import argparse
 from math import inf
 
 kB = 1024
@@ -102,18 +103,27 @@ whole_img_base = 0x00000000
 def make_regions():
     regions = FlashRegions(7*MB)
     regions.add('header',      None,                    VM_BOOT_SECTION_HEADER,     whole_img_base,                                             max_size=0x100)
-    regions.add("dtb",         "bl808-pine64-ox64.dtb", VM_BOOT_SECTION_DTB,        whole_img_base + regions.header.max_size,                   max_size=0x10000)
-    regions.add("opensbi",     "fw_jump.bin",           VM_BOOT_SECTION_OPENSBI,    regions.dtb.flash_offset + regions.dtb.max_size,            max_size=0x20000)
-    regions.add("linux",       "Image.lz4",             VM_BOOT_SECTION_KERNEL,     regions.opensbi.flash_offset + regions.opensbi.max_size    )
+    regions.add("dtb",         args.dtb,                VM_BOOT_SECTION_DTB,        whole_img_base + regions.header.max_size,                   max_size=0x10000)
+    regions.add("opensbi",     args.sbi,           VM_BOOT_SECTION_OPENSBI,    regions.dtb.flash_offset + regions.dtb.max_size,            max_size=0x20000)
+    regions.add("linux",       args.kernel,             VM_BOOT_SECTION_KERNEL,     regions.opensbi.flash_offset + regions.opensbi.max_size    )
     return regions
 
 
 if __name__ == '__main__':
+    parser = argparse.ArgumentParser(
+                    prog = 'mergebin.py',
+                    description = 'Creates a Single Binary Image of the kernel, opensbi and dts files')
+    parser.add_argument('-o', '--output', help='Output file name', required=True)
+    parser.add_argument('-d', '--dtb', help='DTB file name', required=True)
+    parser.add_argument('-k', '--kernel', help='Kernel file name', required=True)
+    parser.add_argument('-s', '--sbi', help='OpenSBI file name', required=True)
+    args = parser.parse_args()
+
     regions = make_regions()
     regions.read()
 
     regions.check()
 
-    with open("whole_img_linux.bin", "wb+") as f:
+    with open(args.output, "wb+") as f:
         f.write(regions.collect_data())
 

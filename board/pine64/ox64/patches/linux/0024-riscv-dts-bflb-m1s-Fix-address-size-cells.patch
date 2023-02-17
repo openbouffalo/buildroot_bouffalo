@@ -1,0 +1,29 @@
+From d7022e457c750271fa2acabbfb432ac56f9c924e Mon Sep 17 00:00:00 2001
+From: Samuel Holland <samuel@sholland.org>
+Date: Sun, 5 Feb 2023 16:13:42 -0600
+Subject: [PATCH 24/31] riscv: dts: bflb: m1s: Fix address/size-cells
+
+The number of address cells needed here (one) does not match the
+implicitly-defined default number of cells.
+
+Signed-off-by: Samuel Holland <samuel@sholland.org>
+---
+ arch/riscv/boot/dts/bouffalolab/bl808-sipeed-m1s.dts | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/arch/riscv/boot/dts/bouffalolab/bl808-sipeed-m1s.dts b/arch/riscv/boot/dts/bouffalolab/bl808-sipeed-m1s.dts
+index 031c824f2061..5307508e7a94 100644
+--- a/arch/riscv/boot/dts/bouffalolab/bl808-sipeed-m1s.dts
++++ b/arch/riscv/boot/dts/bouffalolab/bl808-sipeed-m1s.dts
+@@ -33,6 +33,8 @@ xip_flash@58500000 {
+ 		linux,mtd-name = "xip-flash.0";
+ 		erase-size = <0x10000>;
+ 		bank-width = <4>;
++		#address-cells = <1>;
++		#size-cells = <1>;
+ 
+ 		rootfs@0 {
+ 			label = "rootfs";
+-- 
+2.25.1
+
