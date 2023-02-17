@@ -1,0 +1,73 @@
+From d0fcaa4ed3ffc1d51eba7f2e775b6fb7e49af452 Mon Sep 17 00:00:00 2001
+From: Alexander Horner <33007665+alexhorner@users.noreply.github.com>
+Date: Thu, 16 Feb 2023 19:42:01 +0000
+Subject: [PATCH 29/31] Update device trees for new GPIO and HWRNG drivers
+
+---
+ .../dts/bouffalolab/bl808-pine64-ox64.dts     |  8 +++++
+ arch/riscv/boot/dts/bouffalolab/bl808.dtsi    | 30 +++++++++++++++++++
+ 2 files changed, 38 insertions(+)
+
+diff --git a/arch/riscv/boot/dts/bouffalolab/bl808-pine64-ox64.dts b/arch/riscv/boot/dts/bouffalolab/bl808-pine64-ox64.dts
+index f1db126d88e7..5050c80b6f11 100644
+--- a/arch/riscv/boot/dts/bouffalolab/bl808-pine64-ox64.dts
++++ b/arch/riscv/boot/dts/bouffalolab/bl808-pine64-ox64.dts
+@@ -39,6 +39,14 @@ xip_flash@58500000 {
+ 	};
+ };
+ 
++&pinctrl {
++	status = "okay";
++};
++
++&seceng {
++	status = "okay";
++};
++
+ &uart0 {
+ 	status = "okay";
+ };
+diff --git a/arch/riscv/boot/dts/bouffalolab/bl808.dtsi b/arch/riscv/boot/dts/bouffalolab/bl808.dtsi
+index 7cd033b6a1cf..73a4e055c7a9 100644
+--- a/arch/riscv/boot/dts/bouffalolab/bl808.dtsi
++++ b/arch/riscv/boot/dts/bouffalolab/bl808.dtsi
+@@ -67,6 +67,36 @@ soc {
+ 		#address-cells = <1>;
+ 		#size-cells = <1>;
+ 
++		pinctrl: pinctrl@0x200008C4 {
++			compatible = "bflb,pinctrl";
++			//Last register is for gpio_cfg141 at 0x20000af8
++			reg = <0x200008C4 0x1000>;
++			//clocks = <&gpio_clk>;
++
++			gpio-controller;
++			#gpio-cells = <2>;
++			gpio-ranges = <&pinctrl 0 0 46>;
++			bflb,npins = <46>;
++
++			status = "disabled";
++
++			interrupt-controller;
++			#interrupt-cells = <2>;
++			interrupts-extended = <&ipclic BFLB_IPC_SOURCE_M0
++					BFLB_IPC_DEVICE_GPIO IRQ_TYPE_EDGE_RISING>;
++
++			sdh_pins: sdh-pins {
++				pins = "GPIO0", "GPIO1", "GPIO2", "GPIO3", "GPIO4", "GPIO5";
++				function = "sdh";
++			};
++		};
++
++		seceng: seceng@0x20004000 {
++			compatible = "bflb,seceng";
++			reg = <0x20004000 0x1000>;
++			status = "disabled";
++		};
++
+ 		uart0: serial@30002000 {
+ 			compatible = "bflb,bl808-uart";
+ 			reg = <0x30002000 0x1000>;
+-- 
+2.25.1
+

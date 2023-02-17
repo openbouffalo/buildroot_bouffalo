@@ -1,0 +1,89 @@
+From f4c3995ae6720155d2df0379e2bbd27c6af9dd72 Mon Sep 17 00:00:00 2001
+From: Alexander Horner <33007665+alexhorner@users.noreply.github.com>
+Date: Thu, 16 Feb 2023 19:43:15 +0000
+Subject: [PATCH 31/31] Bring M1s device tree up to date with Ox64's changes,
+ fix compatible string on the Ox64 device tree
+
+---
+ .../dts/bouffalolab/bl808-pine64-ox64.dts     |  2 +-
+ .../boot/dts/bouffalolab/bl808-sipeed-m1s.dts | 31 ++++++++++++++-----
+ 2 files changed, 25 insertions(+), 8 deletions(-)
+
+diff --git a/arch/riscv/boot/dts/bouffalolab/bl808-pine64-ox64.dts b/arch/riscv/boot/dts/bouffalolab/bl808-pine64-ox64.dts
+index 5050c80b6f11..c5b1e86310d9 100644
+--- a/arch/riscv/boot/dts/bouffalolab/bl808-pine64-ox64.dts
++++ b/arch/riscv/boot/dts/bouffalolab/bl808-pine64-ox64.dts
+@@ -9,7 +9,7 @@
+ 
+ / {
+ 	model = "Pine64 Ox64";
+-	compatible = "sipeed,m1s", "bflb,bl808";
++	compatible = "pine64,ox64", "bflb,bl808";
+ 
+ 	aliases {
+ 		serial0 = &uart0;
+diff --git a/arch/riscv/boot/dts/bouffalolab/bl808-sipeed-m1s.dts b/arch/riscv/boot/dts/bouffalolab/bl808-sipeed-m1s.dts
+index 5307508e7a94..ecdce7921323 100644
+--- a/arch/riscv/boot/dts/bouffalolab/bl808-sipeed-m1s.dts
++++ b/arch/riscv/boot/dts/bouffalolab/bl808-sipeed-m1s.dts
+@@ -6,9 +6,11 @@
+ /dts-v1/;
+ 
+ #include "bl808.dtsi"
++#include <dt-bindings/gpio/gpio.h>
++#include <dt-bindings/leds/common.h>
+ 
+ / {
+-	model = "Sipeed M1S";
++	model = "Sipeed M1s";
+ 	compatible = "sipeed,m1s", "bflb,bl808";
+ 
+ 	aliases {
+@@ -17,7 +19,7 @@ aliases {
+ 
+ 	chosen {
+ 		stdout-path = "serial0:2000000n8";
+-		bootargs = "console=ttyS0,2000000 loglevel=8 earlycon=sbi root=/dev/mtdblock0 ro rootfstype=squashfs";
++		bootargs = "console=ttyS0,2000000 loglevel=8 earlycon=sbi root=PARTLABEL=rootfs rootwait rootfstype=ext4";
+ 		linux,initrd-start = <0x0 0x52000000>;
+ 		linux,initrd-end = <0x0 0x52941784>;
+ 	};
+@@ -35,15 +37,30 @@ xip_flash@58500000 {
+ 		bank-width = <4>;
+ 		#address-cells = <1>;
+ 		#size-cells = <1>;
++	};
++
++	leds {
++        compatible = "gpio-leds";
++		
++        led {
++            gpios = <&pinctrl 8 GPIO_ACTIVE_LOW>;
++        };
++    };
++};
++
++&pinctrl {
++	status = "okay";
+ 
+-		rootfs@0 {
+-			label = "rootfs";
+-			reg = <0x00000 0x280000>;
+-			read-only;
+-		};
++	led {
++		pins = "GPIO8";
++		function = "gpio";
+ 	};
+ };
+ 
++&seceng {
++	status = "okay";
++};
++
+ &uart0 {
+ 	status = "okay";
+ };
+-- 
+2.25.1
+

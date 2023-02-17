@@ -73,7 +73,8 @@ jobs:
         echo "DTB=${{ github.workspace }}/buildroot/output/images/bl808-*.dtb" >> $GITHUB_ENV
         echo "OPENSBI=${{ github.workspace }}/buildroot/output/images/fw_jump.bin" >> $GITHUB_ENV
         echo "LOWLOAD=${{ github.workspace }}/buildroot/output/images/*_lowload_bl808_*.bin" >> $GITHUB_ENV
-        echo "WHOLEBIN=${{ github.workspace }}/buildroot/output/images/whole_img_linux.bin" >> $GITHUB_ENV
+        echo "WHOLEBINOX=${{ github.workspace }}/buildroot/output/images/pine64-ox64-firmware.bin" >> $GITHUB_ENV
+        echo "WHOLEBINM1=${{ github.workspace }}/buildroot/output/images/sispeed-m1s-firmware.bin" >> $GITHUB_ENV
         echo "BRSDK=${{ github.workspace }}/buildroot/output/images/riscv*.tar.gz" >> $GITHUB_ENV
     - name: Upload package
       uses: actions/upload-artifact@master
@@ -85,7 +86,8 @@ jobs:
           ${{env.DTB}}
           ${{env.OPENSBI}}
           ${{env.LOWLOAD}}
-          ${{env.WHOLEBIN}}
+          ${{env.WHOLEBINOX}}
+          ${{env.WHOLEBINM1}}
     - name: Upload sdk
       if: matrix.target == 'pine64_ox64_full_defconfig'
       uses: actions/upload-artifact@master
@@ -121,7 +123,8 @@ jobs:
         mv Image-${{ matrix.target }}.lz4 Image.lz4
         mkdir firmware
         cp *_lowload_bl808_*.bin firmware/
-        cp whole_img_linux.bin firmware/
+        cp pine64-ox64-firmware.bin firmware/
+        cp sispeed-m1s-firmware.bin firmware/
         cp sdcard-${{ matrix.target }}.img.xz firmware/
         tar -czvf bl808-linux-${{ matrix.target }}.tar.gz firmware
         echo "FIRMWARE=${{ github.workspace }}/build/bl808-linux-${{ matrix.target }}.tar.gz" >> $GITHUB_ENV
