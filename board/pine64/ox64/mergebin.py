@@ -104,7 +104,7 @@ def make_regions():
     regions = FlashRegions(7*MB)
     regions.add('header',      None,                    VM_BOOT_SECTION_HEADER,     whole_img_base,                                             max_size=0x100)
     regions.add("dtb",         args.dtb,                VM_BOOT_SECTION_DTB,        whole_img_base + regions.header.max_size,                   max_size=0x10000)
-    regions.add("opensbi",     args.sbi,           VM_BOOT_SECTION_OPENSBI,    regions.dtb.flash_offset + regions.dtb.max_size,            max_size=0x20000)
+    regions.add("opensbi",     args.sbi,                VM_BOOT_SECTION_OPENSBI,    regions.dtb.flash_offset + regions.dtb.max_size,            max_size=0x20000)
     regions.add("linux",       args.kernel,             VM_BOOT_SECTION_KERNEL,     regions.opensbi.flash_offset + regions.opensbi.max_size    )
     return regions
 
