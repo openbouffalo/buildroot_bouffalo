@@ -9,7 +9,8 @@ $BR2_EXTERNAL_BOUFFALO_BR_PATH/board/pine64/ox64/mergebin.py -o pine64-ox64-firm
 $BR2_EXTERNAL_BOUFFALO_BR_PATH/board/pine64/ox64/mergebin.py -o sispeed-m1s-firmware.bin -k u-boot.bin.lz4 -d u-boot.dtb -s fw_jump.bin
 echo "Copying Boot Script"
 $BR2_HOST_DIR/bin/mkimage -C none -A riscv -T script -d $BR2_EXTERNAL_BOUFFALO_BR_PATH/board/pine64/ox64/boot-m1s.cmd $BINARIES_DIR/boot-m1s.scr
-$BR2_HOST_DIR/bin/mkimage -C none -A riscv -T script -d $BR2_EXTERNAL_BOUFFALO_BR_PATH/board/pine64/ox64/boot.cmd $BINARIES_DIR/boot.scr
+$BR2_HOST_DIR/bin/mkimage -C none -A riscv -T script -d $BR2_EXTERNAL_BOUFFALO_BR_PATH/board/pine64/ox64/boot-pine64.cmd $BINARIES_DIR/boot-pine64.scr
+cp $BINARIES_DIR/boot-pine64.scr $BINARIES_DIR/boot.scr
 cp $BINARIES_DIR/*.scr $TARGET_DIR/boot/
 cp $BR2_EXTERNAL_BOUFFALO_BR_PATH/board/pine64/ox64/*.cmd $TARGET_DIR/boot/
 echo "Creating Filesystem Image"
