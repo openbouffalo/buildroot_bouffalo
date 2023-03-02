@@ -4,7 +4,7 @@
 #
 ################################################################################
 
-BLMCUSDK_VERSION = 356f258e83cf9f39598c593710dd95e31c0627e7
+BLMCUSDK_VERSION = ab70ccc953269bb4a35279000beea9013da5ac1c
 BLMCUSDK_SITE = $(call github,bouffalolab,bl_mcu_sdk,$(BLMCUSDK_VERSION))
 
 BLMCUSDK_LICENSE =  Apache-2.0 license
