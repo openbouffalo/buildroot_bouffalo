@@ -1,7 +1,11 @@
 By Default, this image is configured to boot the Pine64 Ox64 image. 
-If you want to boot a different image, please copy the boot-m1s.scr 
-in /boot to /boot/boot.scr
 
-The boot-m1s.scr/boot.scr file(s) are U-Boot scripts that will load the 
-correct DTB file the board you are using.
+To change the image, you need to edit the file /boot/extlinux/extlinux.conf 
+and change the Default entry to Sipeed M1SDock Kernel
 
+Alternatively, if you have custom images, and using uboot scripts, you can 
+add the relevent uboot script to the /boot/boot.scr file.
+
+Please see the following link for more information on how how uboot is 
+configured: 
+https://github.com/openbouffalo/buildroot_bouffalo/wiki/U-Boot-Bootflow
