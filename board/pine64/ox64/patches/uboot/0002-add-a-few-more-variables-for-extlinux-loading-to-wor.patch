@@ -1,0 +1,22 @@
+From da8f2c5011a1783d3458b42d49b274e935fb80f9 Mon Sep 17 00:00:00 2001
+From: Justin Hammond <justin@dynam.ac>
+Date: Sat, 4 Mar 2023 15:53:10 +0800
+Subject: [PATCH] add a few more variables for extlinux loading to work
+
+---
+diff --git a/include/configs/bl808.h b/include/configs/bl808.h
+index 976640894d..5de6947958 100644
+--- a/include/configs/bl808.h
++++ b/include/configs/bl808.h
+@@ -46,7 +46,10 @@
+ 
+ #define CFG_EXTRA_ENV_SETTINGS \
+         "scriptaddr=0x50000000\0" \
+-	BOOTENV
++        "kernel_addr_r=0x50200000\0" \
++        "fdt_addr_r=0x51ff8000\0" \
++        "fdtoverlay_addr_r=0x52008000\0" \
++ 	BOOTENV
+ #endif
+ 
+ #endif /* __CONFIG_H */

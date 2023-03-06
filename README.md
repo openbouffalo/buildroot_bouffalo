@@ -23,7 +23,7 @@ The SD card images are configured with a 1Gb Swap Partition, and will resize the
 Inside the downloads you will find the following files:
 * m0_lowload_bl808_m0.bin - This firmware runs on M0 and forwards interupts to the D0 for several peripherals
 * d0_lowload_bl808_d0.bin - This is a very basic bootloader that loads opensbi, the kernel and dts files into ram
-* pine64-ox64-firmware.bin/sispeed-m1s-firmware.bin - A image containing OpenSBI, the Kernel and DTS files for Pine64 OX64 and SiSpeed M1S Dock
+* bl808-firmware.bin - A image containing OpenSBI, Uboot and uboot dtb files. 
 * sdcard-*.tar.xz - A tarball containing the rootfs for the image to be flashed to the SD card
 
 ### Development images
@@ -51,7 +51,7 @@ Download your prefered image above and extract the files.
 - D0 Group[Group0] Image Addr [0x58100000] [PATH to d0_low_load_bl808_d0.bin]
 - Click 'Create & Download' and wait until it's done
 - Switch to [IOT] page
-- Enable 'Single Download', set Address with 0x800000, choose [PATH to pine64-ox64-firmware.bin/sispeed-m1s-firmware.bin] (depending on your board)
+- Enable 'Single Download', set Address with 0x800000, choose [bl808-firmware.bin]
 - Click 'Create & Download' again and wait until it's done
 - flash the sdcard-pine64-*.img.xz to your SD card (you can use dd (after uncompressing) or https://github.com/balena-io/etcher)
 - Serial Console access:
