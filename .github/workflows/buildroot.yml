@@ -49,7 +49,7 @@ jobs:
       with:
         path: ${{ github.workspace }}/buildroot/dl/
         key: ${{ runner.os }}-build-${{ env.cache-name }}-downloads
-    - name: Bulid
+    - name: Build
       run: |
         export BR_BOUFFALO_OVERLAY_PATH=$(pwd)/buildroot_bouffalo
         cd buildroot
