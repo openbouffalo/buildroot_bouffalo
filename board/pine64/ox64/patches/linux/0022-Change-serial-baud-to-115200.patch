@@ -1,0 +1,41 @@
+From 1724d399250475f697532e0e790e7314783f470a Mon Sep 17 00:00:00 2001
+From: "Grant T. Olson" <kgo@grant-olson.net>
+Date: Fri, 27 Jan 2023 12:07:47 -0500
+Subject: [PATCH] Change serial baud rate with CP2102 UART boards.
+
+---
+ arch/riscv/boot/dts/bouffalolab/bl808-pine64-ox64.dts | 4 ++--
+ drivers/tty/serial/bflb_uart.c                        | 2 +-
+ 2 files changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/arch/riscv/boot/dts/bouffalolab/bl808-pine64-ox64.dts b/arch/riscv/boot/dts/bouffalolab/bl808-pine64-ox64.dts
+index ce80095940de..03ee80d87620 100644
+--- a/arch/riscv/boot/dts/bouffalolab/bl808-pine64-ox64.dts
++++ b/arch/riscv/boot/dts/bouffalolab/bl808-pine64-ox64.dts
+@@ -17,8 +17,8 @@ aliases {
+ 	};
+ 
+ 	chosen {
+-		stdout-path = "serial0:2000000n8";
+-		bootargs = "console=ttyS0,2000000 loglevel=8 earlycon=sbi root=PARTLABEL=rootfs rootwait rootfstype=ext4";
++		stdout-path = "serial0:115200n8";
++		bootargs = "console=ttyS0,115200 loglevel=8 earlycon=sbi root=PARTLABEL=rootfs rootwait rootfstype=ext4";
+ 		linux,initrd-start = <0x0 0x52000000>;
+ 		linux,initrd-end = <0x0 0x52941784>;
+ 	};
+diff --git a/drivers/tty/serial/bflb_uart.c b/drivers/tty/serial/bflb_uart.c
+index 5911f489959c..87a73c77f90a 100644
+--- a/drivers/tty/serial/bflb_uart.c
++++ b/drivers/tty/serial/bflb_uart.c
+@@ -80,7 +80,7 @@
+ #define  UART_FIFO_RDATA_MSK		GENMASK(7, 0)
+ 
+ #define BFLB_UART_MAXPORTS 		8
+-#define BFLB_UART_BAUD			2000000
++#define BFLB_UART_BAUD			115200
+ #define BFLB_UART_RX_FIFO_TH		7
+ #define BFLB_UART_TX_FIFO_DEPTH		32
+ 
+-- 
+2.34.1
+
