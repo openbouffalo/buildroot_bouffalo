@@ -1,4 +1,4 @@
-#!/bin/python3
+#!/usr/bin/env python3
 # Description: Merge the Kernel, DTB, and OpenSBI into a single binary
 # From @BBBSnowball 
 import struct
