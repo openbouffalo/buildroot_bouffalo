@@ -47,8 +47,8 @@ Download your prefered image above and extract the files.
 - Select the uart port and set baudrate with 2000000
     + UART TX is physical pin 1/GPIO 14.
     + UART RX is physical pin 2/GPIO 15.
-- M0 Group[Group0] Image Addr [0x58000000] [PATH to m0_low_load_bl808_m0.bin]
-- D0 Group[Group0] Image Addr [0x58100000] [PATH to d0_low_load_bl808_d0.bin]
+- M0 Group[Group0] Image Addr [0x58000000] [PATH to m0_lowload_bl808_m0.bin]
+- D0 Group[Group0] Image Addr [0x58100000] [PATH to d0_lowload_bl808_d0.bin]
 - Click 'Create & Download' and wait until it's done
 - Switch to [IOT] page
 - Enable 'Single Download', set Address with 0x800000, choose [bl808-firmware.bin]
