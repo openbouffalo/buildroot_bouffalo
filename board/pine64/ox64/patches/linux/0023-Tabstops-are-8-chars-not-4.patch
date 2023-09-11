@@ -1,17 +1,17 @@
-From b6635b506ad2a53cc8d0b786d741f9aa42ccc50b Mon Sep 17 00:00:00 2001
+From ef9b8092abfcdaf1dcac357300d67ac1d9911f41 Mon Sep 17 00:00:00 2001
 From: Justin Hammond <justin@dynam.ac>
 Date: Mon, 6 Feb 2023 13:41:53 +0800
-Subject: [PATCH 27/31] Tabstops are 8 chars, not 4
+Subject: [PATCH 23/26] Tabstops are 8 chars, not 4
 
 ---
  arch/riscv/boot/dts/bouffalolab/bl808.dtsi | 2 +-
  1 file changed, 1 insertion(+), 1 deletion(-)
 
 diff --git a/arch/riscv/boot/dts/bouffalolab/bl808.dtsi b/arch/riscv/boot/dts/bouffalolab/bl808.dtsi
-index 34652e17aece..7cd033b6a1cf 100644
+index a3af1bf19..254793ca1 100644
 --- a/arch/riscv/boot/dts/bouffalolab/bl808.dtsi
 +++ b/arch/riscv/boot/dts/bouffalolab/bl808.dtsi
-@@ -145,7 +145,7 @@ clint: timer@e4000000 {
+@@ -118,7 +118,7 @@ clint: timer@e4000000 {
  			compatible = "thead,c900-clint";
  			reg = <0xe4000000 0xc000>;
  			interrupts-extended = <&cpu0_intc 3>,
@@ -21,5 +21,5 @@ index 34652e17aece..7cd033b6a1cf 100644
  	};
  };
 -- 
-2.25.1
+2.42.0
 

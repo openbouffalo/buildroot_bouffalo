@@ -1,7 +1,7 @@
-From f4c3995ae6720155d2df0379e2bbd27c6af9dd72 Mon Sep 17 00:00:00 2001
+From 54a92322b841369cbe2286625792ab3b8f3e3f1f Mon Sep 17 00:00:00 2001
 From: Alexander Horner <33007665+alexhorner@users.noreply.github.com>
 Date: Thu, 16 Feb 2023 19:43:15 +0000
-Subject: [PATCH 31/31] Bring M1s device tree up to date with Ox64's changes,
+Subject: [PATCH 26/26] Bring M1s device tree up to date with Ox64's changes,
  fix compatible string on the Ox64 device tree
 
 ---
@@ -10,7 +10,7 @@ Subject: [PATCH 31/31] Bring M1s device tree up to date with Ox64's changes,
  2 files changed, 25 insertions(+), 8 deletions(-)
 
 diff --git a/arch/riscv/boot/dts/bouffalolab/bl808-pine64-ox64.dts b/arch/riscv/boot/dts/bouffalolab/bl808-pine64-ox64.dts
-index 5050c80b6f11..c5b1e86310d9 100644
+index 87e2a4276..0d8ba867a 100644
 --- a/arch/riscv/boot/dts/bouffalolab/bl808-pine64-ox64.dts
 +++ b/arch/riscv/boot/dts/bouffalolab/bl808-pine64-ox64.dts
 @@ -9,7 +9,7 @@
@@ -23,7 +23,7 @@ index 5050c80b6f11..c5b1e86310d9 100644
  	aliases {
  		serial0 = &uart0;
 diff --git a/arch/riscv/boot/dts/bouffalolab/bl808-sipeed-m1s.dts b/arch/riscv/boot/dts/bouffalolab/bl808-sipeed-m1s.dts
-index 5307508e7a94..ecdce7921323 100644
+index 87c38cb6b..1d09c060a 100644
 --- a/arch/riscv/boot/dts/bouffalolab/bl808-sipeed-m1s.dts
 +++ b/arch/riscv/boot/dts/bouffalolab/bl808-sipeed-m1s.dts
 @@ -6,9 +6,11 @@
@@ -56,7 +56,7 @@ index 5307508e7a94..ecdce7921323 100644
 +
 +	leds {
 +        compatible = "gpio-leds";
-+		
++
 +        led {
 +            gpios = <&pinctrl 8 GPIO_ACTIVE_LOW>;
 +        };
@@ -85,5 +85,5 @@ index 5307508e7a94..ecdce7921323 100644
  	status = "okay";
  };
 -- 
-2.25.1
+2.42.0
 

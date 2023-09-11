@@ -1,17 +1,17 @@
-From ac995c3b89aa22d75da6d7baf5a3c659a9f47dcc Mon Sep 17 00:00:00 2001
+From 3f2009af7dc25b6db735ab73949da540780de8b5 Mon Sep 17 00:00:00 2001
 From: Justin Hammond <justin@dynam.ac>
 Date: Mon, 6 Feb 2023 13:38:55 +0800
-Subject: [PATCH 26/31] Add timer node for OpenSBI 1.2 compatibility
+Subject: [PATCH 22/26] Add timer node for OpenSBI 1.2 compatibility
 
 ---
  arch/riscv/boot/dts/bouffalolab/bl808.dtsi | 7 +++++++
  1 file changed, 7 insertions(+)
 
 diff --git a/arch/riscv/boot/dts/bouffalolab/bl808.dtsi b/arch/riscv/boot/dts/bouffalolab/bl808.dtsi
-index dd795667dea6..34652e17aece 100644
+index 92e341e29..a3af1bf19 100644
 --- a/arch/riscv/boot/dts/bouffalolab/bl808.dtsi
 +++ b/arch/riscv/boot/dts/bouffalolab/bl808.dtsi
-@@ -140,5 +140,12 @@ plic: interrupt-controller@e0000000 {
+@@ -113,5 +113,12 @@ plic: interrupt-controller@e0000000 {
  			#interrupt-cells = <2>;
  			riscv,ndev = <64>;
  		};
@@ -25,5 +25,5 @@ index dd795667dea6..34652e17aece 100644
  	};
  };
 -- 
-2.25.1
+2.42.0
 

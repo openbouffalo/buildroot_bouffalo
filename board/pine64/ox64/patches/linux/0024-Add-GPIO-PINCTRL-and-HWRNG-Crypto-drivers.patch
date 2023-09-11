@@ -1,7 +1,7 @@
-From 6adabb3a26a433cc80d906eb42908c558a119665 Mon Sep 17 00:00:00 2001
+From 6383de4eada90aeddd7a76b8abf39b3b731024fd Mon Sep 17 00:00:00 2001
 From: Alexander Horner <33007665+alexhorner@users.noreply.github.com>
 Date: Tue, 14 Feb 2023 22:44:18 +0000
-Subject: [PATCH 28/31] Add GPIO/PINCTRL and HWRNG/Crypto drivers
+Subject: [PATCH 24/26] Add GPIO/PINCTRL and HWRNG/Crypto drivers
 
 ---
  drivers/crypto/Kconfig                 |  11 +
@@ -10,13 +10,13 @@ Subject: [PATCH 28/31] Add GPIO/PINCTRL and HWRNG/Crypto drivers
  drivers/pinctrl/Kconfig                |  16 +
  drivers/pinctrl/Makefile               |   1 +
  drivers/pinctrl/pinctrl-bflb.c         | 719 +++++++++++++++++++++++++
- include/dt-bindings/mailbox/bflb-ipc.h |   3 +-
- 7 files changed, 1420 insertions(+), 1 deletion(-)
+ include/dt-bindings/mailbox/bflb-ipc.h |   3 +
+ 7 files changed, 1421 insertions(+)
  create mode 100644 drivers/crypto/bflb-seceng.c
  create mode 100644 drivers/pinctrl/pinctrl-bflb.c
 
 diff --git a/drivers/crypto/Kconfig b/drivers/crypto/Kconfig
-index dfb103f81a64..e8de3d60ffd8 100644
+index 44e44b8d9..01bfc2b86 100644
 --- a/drivers/crypto/Kconfig
 +++ b/drivers/crypto/Kconfig
 @@ -13,6 +13,17 @@ if CRYPTO_HW
@@ -38,7 +38,7 @@ index dfb103f81a64..e8de3d60ffd8 100644
  	tristate "Support for VIA PadLock ACE"
  	depends on X86 && !UML
 diff --git a/drivers/crypto/Makefile b/drivers/crypto/Makefile
-index fa8bf1be1a8c..1b5c60587c43 100644
+index d859d6a5f..cb5bd6b1e 100644
 --- a/drivers/crypto/Makefile
 +++ b/drivers/crypto/Makefile
 @@ -8,6 +8,7 @@ obj-$(CONFIG_CRYPTO_DEV_ATMEL_TDES) += atmel-tdes.o
@@ -51,7 +51,7 @@ index fa8bf1be1a8c..1b5c60587c43 100644
  obj-$(CONFIG_CRYPTO_DEV_CCREE) += ccree/
 diff --git a/drivers/crypto/bflb-seceng.c b/drivers/crypto/bflb-seceng.c
 new file mode 100644
-index 000000000000..3e450f06ddea
+index 000000000..3e450f06d
 --- /dev/null
 +++ b/drivers/crypto/bflb-seceng.c
 @@ -0,0 +1,670 @@
@@ -726,7 +726,7 @@ index 000000000000..3e450f06ddea
 +MODULE_AUTHOR("Alexander Horner <contact@alexhorner.cc>");
 +MODULE_LICENSE("GPL v2");
 diff --git a/drivers/pinctrl/Kconfig b/drivers/pinctrl/Kconfig
-index 7d5f5458c72e..9120cd4b761f 100644
+index 57d57af1f..ba797e573 100644
 --- a/drivers/pinctrl/Kconfig
 +++ b/drivers/pinctrl/Kconfig
 @@ -127,6 +127,22 @@ config PINCTRL_AXP209
@@ -753,7 +753,7 @@ index 7d5f5458c72e..9120cd4b761f 100644
  	bool "Bitmain BM1880 Pinctrl driver"
  	depends on OF && (ARCH_BITMAIN || COMPILE_TEST)
 diff --git a/drivers/pinctrl/Makefile b/drivers/pinctrl/Makefile
-index d5939840bb2a..9f7c89ed4bb4 100644
+index 482b391b5..8e493adf8 100644
 --- a/drivers/pinctrl/Makefile
 +++ b/drivers/pinctrl/Makefile
 @@ -16,6 +16,7 @@ obj-$(CONFIG_PINCTRL_AS3722)	+= pinctrl-as3722.o
@@ -766,7 +766,7 @@ index d5939840bb2a..9f7c89ed4bb4 100644
  obj-$(CONFIG_PINCTRL_DA850_PUPD) += pinctrl-da850-pupd.o
 diff --git a/drivers/pinctrl/pinctrl-bflb.c b/drivers/pinctrl/pinctrl-bflb.c
 new file mode 100644
-index 000000000000..4223fcc18ed5
+index 000000000..4223fcc18
 --- /dev/null
 +++ b/drivers/pinctrl/pinctrl-bflb.c
 @@ -0,0 +1,719 @@
@@ -1490,7 +1490,7 @@ index 000000000000..4223fcc18ed5
 +MODULE_AUTHOR("Alexander Horner <contact@alexhorner.cc>");
 +MODULE_LICENSE("GPL v2");
 diff --git a/include/dt-bindings/mailbox/bflb-ipc.h b/include/dt-bindings/mailbox/bflb-ipc.h
-index 0a3c6745a673..9763460edbcc 100644
+index e96fe62cb..9763460ed 100644
 --- a/include/dt-bindings/mailbox/bflb-ipc.h
 +++ b/include/dt-bindings/mailbox/bflb-ipc.h
 @@ -13,5 +13,8 @@
@@ -1503,5 +1503,5 @@ index 0a3c6745a673..9763460edbcc 100644
  
  #endif
 -- 
-2.25.1
+2.42.0
 

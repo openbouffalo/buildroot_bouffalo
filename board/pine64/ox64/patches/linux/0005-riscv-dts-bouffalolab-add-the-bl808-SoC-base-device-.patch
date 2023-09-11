@@ -1,7 +1,7 @@
-From 9492a693822a8c51351eaa04fca0666db140fe15 Mon Sep 17 00:00:00 2001
+From 2a1be6839b7c7d7af4b279ffcc5bc74dc07458a9 Mon Sep 17 00:00:00 2001
 From: Jisheng Zhang <jszhang@kernel.org>
 Date: Sun, 20 Nov 2022 16:21:12 +0800
-Subject: [PATCH 05/15] riscv: dts: bouffalolab: add the bl808 SoC base device
+Subject: [PATCH 05/26] riscv: dts: bouffalolab: add the bl808 SoC base device
  tree
 
 Add a baisc dtsi for the bouffalolab bl808 SoC.
@@ -14,18 +14,19 @@ Signed-off-by: Jisheng Zhang <jszhang@kernel.org>
  create mode 100644 arch/riscv/boot/dts/bouffalolab/bl808.dtsi
 
 diff --git a/arch/riscv/boot/dts/Makefile b/arch/riscv/boot/dts/Makefile
-index b0ff5fbabb0c..2d4376810bcc 100644
+index f60a280ab..d9329068e 100644
 --- a/arch/riscv/boot/dts/Makefile
 +++ b/arch/riscv/boot/dts/Makefile
-@@ -1,4 +1,5 @@
+@@ -1,5 +1,6 @@
  # SPDX-License-Identifier: GPL-2.0
+ subdir-y += allwinner
 +subdir-y += bouffalolab
- subdir-y += sifive
- subdir-y += starfive
- subdir-$(CONFIG_SOC_CANAAN_K210_DTB_BUILTIN) += canaan
+ subdir-y += canaan
+ subdir-y += microchip
+ subdir-y += renesas
 diff --git a/arch/riscv/boot/dts/bouffalolab/bl808.dtsi b/arch/riscv/boot/dts/bouffalolab/bl808.dtsi
 new file mode 100644
-index 000000000000..c98ebb14ee10
+index 000000000..c98ebb14e
 --- /dev/null
 +++ b/arch/riscv/boot/dts/bouffalolab/bl808.dtsi
 @@ -0,0 +1,74 @@
@@ -104,5 +105,5 @@ index 000000000000..c98ebb14ee10
 +	};
 +};
 -- 
-2.39.0
+2.42.0
 
