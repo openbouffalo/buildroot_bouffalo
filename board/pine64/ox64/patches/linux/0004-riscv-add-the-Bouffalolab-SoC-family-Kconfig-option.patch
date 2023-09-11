@@ -1,7 +1,7 @@
-From 87e493b1d6b25ef51ccf4edadbebe38bd8583222 Mon Sep 17 00:00:00 2001
+From b99ead5c8b0604ad073c1ef9e551319d9e09f4fc Mon Sep 17 00:00:00 2001
 From: Jisheng Zhang <jszhang@kernel.org>
 Date: Sun, 20 Nov 2022 16:21:11 +0800
-Subject: [PATCH 04/15] riscv: add the Bouffalolab SoC family Kconfig option
+Subject: [PATCH 04/26] riscv: add the Bouffalolab SoC family Kconfig option
 
 The Bouffalolab bl808 SoC contains three riscv CPUs, namely M0, D0 and
 LP. The D0 is 64bit RISC-V GC compatible, so can run linux.
@@ -12,7 +12,7 @@ Signed-off-by: Jisheng Zhang <jszhang@kernel.org>
  1 file changed, 6 insertions(+)
 
 diff --git a/arch/riscv/Kconfig.socs b/arch/riscv/Kconfig.socs
-index 4b6deb2715f1..a68ab2172230 100644
+index 6833d01e2..a4828b5a1 100644
 --- a/arch/riscv/Kconfig.socs
 +++ b/arch/riscv/Kconfig.socs
 @@ -1,5 +1,11 @@
@@ -24,9 +24,9 @@ index 4b6deb2715f1..a68ab2172230 100644
 +	help
 +	  This enables support for Bouffalolab SoC platforms.
 +
- config SOC_MICROCHIP_POLARFIRE
- 	bool "Microchip PolarFire SoCs"
- 	select MCHP_CLK_MPFS
+ config ARCH_MICROCHIP_POLARFIRE
+ 	def_bool SOC_MICROCHIP_POLARFIRE
+ 
 -- 
-2.39.0
+2.42.0
 

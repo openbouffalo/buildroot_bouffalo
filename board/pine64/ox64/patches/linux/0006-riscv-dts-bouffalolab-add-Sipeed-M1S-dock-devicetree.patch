@@ -1,7 +1,7 @@
-From d22d4a678ec3fb88015e458077de5e933d860513 Mon Sep 17 00:00:00 2001
+From 4369c444ca342c248d3925ec176307a4d76e2eff Mon Sep 17 00:00:00 2001
 From: Jisheng Zhang <jszhang@kernel.org>
 Date: Sun, 20 Nov 2022 16:21:13 +0800
-Subject: [PATCH 06/15] riscv: dts: bouffalolab: add Sipeed M1S dock devicetree
+Subject: [PATCH 06/26] riscv: dts: bouffalolab: add Sipeed M1S dock devicetree
 
 Sipeed manufactures a M1S system-on-module and dock board, add basic
 support for them.
@@ -16,7 +16,7 @@ Signed-off-by: Jisheng Zhang <jszhang@kernel.org>
 
 diff --git a/arch/riscv/boot/dts/bouffalolab/Makefile b/arch/riscv/boot/dts/bouffalolab/Makefile
 new file mode 100644
-index 000000000000..42e17e1a97bd
+index 000000000..42e17e1a9
 --- /dev/null
 +++ b/arch/riscv/boot/dts/bouffalolab/Makefile
 @@ -0,0 +1,2 @@
@@ -24,7 +24,7 @@ index 000000000000..42e17e1a97bd
 +dtb-$(CONFIG_SOC_BOUFFALOLAB) += bl808-sipeed-m1s.dtb
 diff --git a/arch/riscv/boot/dts/bouffalolab/bl808-sipeed-m1s.dts b/arch/riscv/boot/dts/bouffalolab/bl808-sipeed-m1s.dts
 new file mode 100644
-index 000000000000..64421fb2ad67
+index 000000000..64421fb2a
 --- /dev/null
 +++ b/arch/riscv/boot/dts/bouffalolab/bl808-sipeed-m1s.dts
 @@ -0,0 +1,30 @@
@@ -59,5 +59,5 @@ index 000000000000..64421fb2ad67
 +	status = "okay";
 +};
 -- 
-2.39.0
+2.42.0
 

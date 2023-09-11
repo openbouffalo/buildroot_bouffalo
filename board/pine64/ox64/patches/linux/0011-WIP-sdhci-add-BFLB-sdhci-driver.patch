@@ -1,7 +1,7 @@
-From 14d10e1f6fd28f9c760c46b5fd1becd2f2b20f9a Mon Sep 17 00:00:00 2001
+From b6b3565f3a4da4c158ed2d5e488a8ac8e467c507 Mon Sep 17 00:00:00 2001
 From: Allen Martin <armartin@gmail.com>
 Date: Wed, 11 Jan 2023 18:16:51 -0800
-Subject: [PATCH 12/15] WIP: sdhci: add BFLB sdhci driver
+Subject: [PATCH 11/26] WIP: sdhci: add BFLB sdhci driver
 
 ---
  .../boot/dts/bouffalolab/bl808-sipeed-m1s.dts |   4 +
@@ -13,7 +13,7 @@ Subject: [PATCH 12/15] WIP: sdhci: add BFLB sdhci driver
  create mode 100644 drivers/mmc/host/sdhci-bflb.c
 
 diff --git a/arch/riscv/boot/dts/bouffalolab/bl808-sipeed-m1s.dts b/arch/riscv/boot/dts/bouffalolab/bl808-sipeed-m1s.dts
-index 70259bad7dfd..effaeda67c3f 100644
+index 70259bad7..effaeda67 100644
 --- a/arch/riscv/boot/dts/bouffalolab/bl808-sipeed-m1s.dts
 +++ b/arch/riscv/boot/dts/bouffalolab/bl808-sipeed-m1s.dts
 @@ -46,6 +46,10 @@ &uart0 {
@@ -28,7 +28,7 @@ index 70259bad7dfd..effaeda67c3f 100644
  	status = "okay";
  };
 diff --git a/arch/riscv/boot/dts/bouffalolab/bl808.dtsi b/arch/riscv/boot/dts/bouffalolab/bl808.dtsi
-index c5cda8d74ccd..6f859194f82c 100644
+index c5cda8d74..6f859194f 100644
 --- a/arch/riscv/boot/dts/bouffalolab/bl808.dtsi
 +++ b/arch/riscv/boot/dts/bouffalolab/bl808.dtsi
 @@ -61,6 +61,17 @@ uart0: serial@30002000 {
@@ -50,10 +50,10 @@ index c5cda8d74ccd..6f859194f82c 100644
  			compatible = "bouffalolab,bflb-ipc";
  			reg = <0x30005000 0x20>,
 diff --git a/drivers/mmc/host/Kconfig b/drivers/mmc/host/Kconfig
-index 5e19a961c34d..f3c4654bb376 100644
+index 554e67103..1254ab7f1 100644
 --- a/drivers/mmc/host/Kconfig
 +++ b/drivers/mmc/host/Kconfig
-@@ -413,6 +413,20 @@ config MMC_SDHCI_F_SDH30
+@@ -403,6 +403,20 @@ config MMC_SDHCI_F_SDH30
  
  	  If unsure, say N.
  
@@ -75,10 +75,10 @@ index 5e19a961c34d..f3c4654bb376 100644
  	tristate "SDHCI support for Socionext Milbeaut Serieas using F_SDH30"
  	depends on MMC_SDHCI_PLTFM
 diff --git a/drivers/mmc/host/Makefile b/drivers/mmc/host/Makefile
-index ba0c6d0cd85d..626875dfb629 100644
+index a693fa3d3..c210eef68 100644
 --- a/drivers/mmc/host/Makefile
 +++ b/drivers/mmc/host/Makefile
-@@ -103,6 +103,7 @@ cqhci-y					+= cqhci-core.o
+@@ -101,6 +101,7 @@ cqhci-y					+= cqhci-core.o
  cqhci-$(CONFIG_MMC_CRYPTO)		+= cqhci-crypto.o
  obj-$(CONFIG_MMC_HSQ)			+= mmc_hsq.o
  obj-$(CONFIG_MMC_LITEX)			+= litex_mmc.o
@@ -88,7 +88,7 @@ index ba0c6d0cd85d..626875dfb629 100644
  	CFLAGS-cb710-mmc	+= -DDEBUG
 diff --git a/drivers/mmc/host/sdhci-bflb.c b/drivers/mmc/host/sdhci-bflb.c
 new file mode 100644
-index 000000000000..a67ecb2a380d
+index 000000000..a67ecb2a3
 --- /dev/null
 +++ b/drivers/mmc/host/sdhci-bflb.c
 @@ -0,0 +1,117 @@
@@ -210,5 +210,5 @@ index 000000000000..a67ecb2a380d
 +MODULE_DESCRIPTION("SDHCI driver for Bflb");
 +MODULE_LICENSE("GPL v2");
 -- 
-2.39.0
+2.42.0
 

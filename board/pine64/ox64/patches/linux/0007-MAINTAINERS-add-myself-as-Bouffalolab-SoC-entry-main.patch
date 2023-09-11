@@ -1,7 +1,7 @@
-From e1525068345d782bc4626b5927781760639bd6aa Mon Sep 17 00:00:00 2001
+From 232346354006b05cc17b18d869f350fdd016a68b Mon Sep 17 00:00:00 2001
 From: Jisheng Zhang <jszhang@kernel.org>
 Date: Sun, 20 Nov 2022 16:21:14 +0800
-Subject: [PATCH 07/15] MAINTAINERS: add myself as Bouffalolab SoC entry
+Subject: [PATCH 07/26] MAINTAINERS: add myself as Bouffalolab SoC entry
  maintainer
 
 I want to maintain this Bouffalolab riscv SoC entry from now on.
@@ -12,10 +12,10 @@ Signed-off-by: Jisheng Zhang <jszhang@kernel.org>
  1 file changed, 6 insertions(+)
 
 diff --git a/MAINTAINERS b/MAINTAINERS
-index dce6b97c4ed4..9508391b8dbe 100644
+index af34df3f4..86f30ed3c 100644
 --- a/MAINTAINERS
 +++ b/MAINTAINERS
-@@ -17961,6 +17961,12 @@ F:	arch/riscv/
+@@ -18289,6 +18289,12 @@ F:	arch/riscv/
  N:	riscv
  K:	riscv
  
@@ -29,5 +29,5 @@ index dce6b97c4ed4..9508391b8dbe 100644
  M:	Conor Dooley <conor.dooley@microchip.com>
  M:	Daire McNamara <daire.mcnamara@microchip.com>
 -- 
-2.39.0
+2.42.0
 

@@ -1,7 +1,7 @@
-From d54c88d19380488afecbf0257fea7f5adb60ed7f Mon Sep 17 00:00:00 2001
+From 0158428ff4429a05f74f8043b29f86c1d65a57cc Mon Sep 17 00:00:00 2001
 From: Jisheng Zhang <jszhang@kernel.org>
 Date: Sun, 20 Nov 2022 16:21:08 +0800
-Subject: [PATCH 01/15] dt-bindings: serial: add bindings doc for Bouffalolab
+Subject: [PATCH 01/26] dt-bindings: serial: add bindings doc for Bouffalolab
  uart driver
 
 Add bindings doc for Bouffalolab UART Driver
@@ -14,7 +14,7 @@ Signed-off-by: Jisheng Zhang <jszhang@kernel.org>
 
 diff --git a/Documentation/devicetree/bindings/serial/bouffalolab,uart.yaml b/Documentation/devicetree/bindings/serial/bouffalolab,uart.yaml
 new file mode 100644
-index 000000000000..6cef956d33d2
+index 000000000..6cef956d3
 --- /dev/null
 +++ b/Documentation/devicetree/bindings/serial/bouffalolab,uart.yaml
 @@ -0,0 +1,50 @@
@@ -69,5 +69,5 @@ index 000000000000..6cef956d33d2
 +    };
 +...
 -- 
-2.39.0
+2.42.0
 
