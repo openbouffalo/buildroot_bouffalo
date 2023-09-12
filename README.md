@@ -38,7 +38,7 @@ Released Images are [Here](https://github.com/openbouffalo/buildroot_bouffalo/re
 
 Download your prefered image above and extract the files.
 
-- Get DevCube **1.8.3** from https://dev.bouffalolab.com/media/upload/download/BouffaloLabDevCube-v1.8.3.zip (normal download location is http://dev.bouffalolab.com/download but 1.8.4 and later do not work, see #60)
+- Get DevCube **1.8.3** from https://openbouffalo.org/static-assets/bldevcube/BouffaloLabDevCube-v1.8.3.zip (normal download location is http://dev.bouffalolab.com/download but 1.8.4 and later do not work, see #60)
 - Connect BL808 board via serial port to your PC
 - Set BL808 board to programming mode
     + Press BOOT button when reseting or applying power
