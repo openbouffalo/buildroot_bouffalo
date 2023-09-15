@@ -1,0 +1,44 @@
+From 642b5807933cff414610ecb04af3357738741b82 Mon Sep 17 00:00:00 2001
+From: qwang <qwang@bouffalolab.com>
+Date: Fri, 15 Sep 2023 16:41:25 +0800
+Subject: [PATCH] dts: bl808: Shrink reserved M0 memory to 1M
+
+Signed-off-by: qwang <qwang@bouffalolab.com>
+---
+ arch/riscv/boot/dts/bouffalolab/bl808-pine64-ox64.dts | 4 ++--
+ arch/riscv/boot/dts/bouffalolab/bl808-sipeed-m1s.dts  | 4 ++--
+ 2 files changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/arch/riscv/boot/dts/bouffalolab/bl808-pine64-ox64.dts b/arch/riscv/boot/dts/bouffalolab/bl808-pine64-ox64.dts
+index df8559063..f7dbefd42 100644
+--- a/arch/riscv/boot/dts/bouffalolab/bl808-pine64-ox64.dts
++++ b/arch/riscv/boot/dts/bouffalolab/bl808-pine64-ox64.dts
+@@ -32,8 +32,8 @@ reserved-memory {
+ 		#size-cells = <1>;
+ 		ranges;
+ 
+-		m0_psram_reserved: m0_psram@53E00000 {
+-			reg = <0x53E00000 0x200000>;
++		m0_psram_reserved: m0_psram@53F00000 {
++			reg = <0x53F00000 0x100000>;
+ 			status = "okay";
+ 		};
+ 	};
+diff --git a/arch/riscv/boot/dts/bouffalolab/bl808-sipeed-m1s.dts b/arch/riscv/boot/dts/bouffalolab/bl808-sipeed-m1s.dts
+index 3aea25e39..951af0ad0 100644
+--- a/arch/riscv/boot/dts/bouffalolab/bl808-sipeed-m1s.dts
++++ b/arch/riscv/boot/dts/bouffalolab/bl808-sipeed-m1s.dts
+@@ -33,8 +33,8 @@ reserved-memory {
+ 		#size-cells = <1>;
+ 		ranges;
+ 
+-		m0_psram_reserved: m0_psram@53E00000 {
+-			reg = <0x53E00000 0x200000>;
++		m0_psram_reserved: m0_psram@53F00000 {
++			reg = <0x53F00000 0x100000>;
+ 			status = "okay";
+ 		};
+ 	};
+-- 
+2.42.0
+
