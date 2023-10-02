@@ -34,6 +34,74 @@ Latest Development Build Result:
 
 Released Images are [Here](https://github.com/openbouffalo/buildroot_bouffalo/releases/latest)
 
+## Compilation:
+
+1. **Setting up the Build Directory**:
+
+    Open the terminal and create a new directory for the build:
+
+    ```bash
+    mkdir buildroot_bouffalo && cd buildroot_bouffalo
+    ```
+
+2. **Cloning Necessary Repositories**:
+
+    Clone the primary Buildroot repository and the specific Buildroot Bouffalo repository:
+    
+    ```bash
+    git clone https://github.com/buildroot/buildroot
+    git clone https://github.com/openbouffalo/buildroot_bouffalo
+    ```
+
+3. **Setting Up Overlay Path**:
+
+    Define an environment variable for the Buildroot Bouffalo overlay path:
+
+    ```bash
+    export BR_BOUFFALO_OVERLAY_PATH=$(pwd)/buildroot_bouffalo
+    ```
+
+4. **Navigating to Buildroot Directory**:
+
+    Change directory into the cloned Buildroot folder:
+
+    ```bash
+    cd buildroot
+    ```
+
+5. **Initial Configuration**:
+
+    Apply the default configuration for Pine64 Ox64:
+
+    ```bash
+    make BR2_EXTERNAL=$BR_BOUFFALO_OVERLAY_PATH pine64_ox64_defconfig
+    ```
+
+6. **Configure Build Settings**:
+
+    Use the `menuconfig` tool to adjust build settings:
+    
+    ```bash
+    make menuconfig
+    ```
+
+    *Note*: Within `menuconfig`:
+
+    - Navigate to `Target Architecture`.
+    - Enable `Single-precision Floating-point` and `Double-precision Floating-point`.
+    - Set `Target ABI` to `lp64d`.
+    - Under `Toolchain`, enable `Fortran support` and `OpenMP support`.
+
+7. **Compiling**:
+
+    Initiate the build process:
+    
+    ```bash
+    make
+    ```
+
+    *Note*: Before executing the `make` command, ensure your `PATH` variable doesn't have spaces.
+
 ## Flashing Instructions
 
 Download your prefered image above and extract the files.
