@@ -3,35 +3,13 @@
 ## Usage
 
 ```
-git clone https://github.com/openbouffalo/buildroot_bouffalo
+git clone --recursive https://github.com/bouffalolab/buildroot_bouffalo.git
 cd buildroot_bouffalo
 export BR_BOUFFALO_OVERLAY_PATH=$(pwd)
 cd buildroot
-make BR2_EXTERNAL=$BR_BOUFFALO_OVERLAY_PATH pine64_ox64_defconfig
+make BR2_EXTERNAL=$BR_BOUFFALO_OVERLAY_PATH bl808_nor_flash_defconfig
 make
 ```
-
-## Prebuilt images
-
-Prebuilt images are available on the releases page (for tested images) or development images are available via the github actions page
-
-Two images are currently build - A minimal image - `sdcard-pine64_0x64_defconfig` and a more complete image - `sdcard-pine64_0x64_full_defconfig`
-
-The SD card images are configured with a 1Gb Swap Partition, and will resize the rootfs partition on first boot to the full size of the SD card.
-
-Inside the downloads you will find the following files:
-* m0_lowload_bl808_m0.bin - This firmware runs on M0 and forwards interupts to the D0 for several peripherals
-* d0_lowload_bl808_d0.bin - This is a very basic bootloader that loads opensbi, the kernel and dts files into ram
-* bl808-firmware.bin - A image containing OpenSBI, Uboot and uboot dtb files. 
-* sdcard-*.tar.xz - A tarball containing the rootfs for the image to be flashed to the SD card
-
-### Development images
-Latest Development Build Result:
-[![Build](https://github.com/openbouffalo/buildroot_bouffalo/actions/workflows/buildroot.yml/badge.svg)](https://github.com/openbouffalo/buildroot_bouffalo/actions/workflows/buildroot.yml)
-
-### Released images
-
-Released Images are [Here](https://github.com/openbouffalo/buildroot_bouffalo/releases/latest)
 
 ## Flashing Instructions
 
@@ -58,10 +36,6 @@ Download your prefered image above and extract the files.
     + UART RX is physical pin 31/GPIO 17.
     + Baud 2000000.
 - Enjoy!
-
-## Compiling Applications for BL808 based boards
-
-Buildroot provides a "SDK" for the boards. This is a tarball containing the cross compiler and sysroot for the target board. This can be used to compile applications for the board. Please refer to https://github.com/openbouffalo/buildroot_bouffalo/wiki/Building-Programs-outside-of-buildroot for basic instructions (or consult the [buildroot documentation](https://buildroot.org/downloads/manual/using-buildroot-toolchain.txt))
 
 ## Current Status of Linux
 
