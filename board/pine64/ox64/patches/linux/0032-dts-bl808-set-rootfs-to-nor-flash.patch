@@ -1,0 +1,40 @@
+From 06759a109fca309e6d906d569b5ccc33d2303967 Mon Sep 17 00:00:00 2001
+From: qwang <qwang@bouffalolab.com>
+Date: Fri, 20 Oct 2023 11:03:55 +0800
+Subject: [PATCH 2/2] dts: bl808: set rootfs to nor flash
+
+Signed-off-by: qwang <qwang@bouffalolab.com>
+---
+ arch/riscv/boot/dts/bouffalolab/bl808-pine64-ox64.dts | 2 +-
+ arch/riscv/boot/dts/bouffalolab/bl808-sipeed-m1s.dts  | 2 +-
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/arch/riscv/boot/dts/bouffalolab/bl808-pine64-ox64.dts b/arch/riscv/boot/dts/bouffalolab/bl808-pine64-ox64.dts
+index eb270fc11..cba844d99 100644
+--- a/arch/riscv/boot/dts/bouffalolab/bl808-pine64-ox64.dts
++++ b/arch/riscv/boot/dts/bouffalolab/bl808-pine64-ox64.dts
+@@ -18,7 +18,7 @@ aliases {
+ 
+ 	chosen {
+ 		stdout-path = "serial0:2000000n8";
+-		bootargs = "console=ttyS0,2000000 loglevel=8 earlycon=sbi root=PARTLABEL=rootfs rootwait rootfstype=ext4";
++		bootargs = "console=ttyS0,2000000 loglevel=8 earlycon=sbi mtdparts=bflb_sflash:128K(m0-ll),128K(d0-ll),704K(sbi-uboot),64K(uboot-env),4M(kernel),8M(rootfs),3M(rootfs-data) rootfstype=squashfs root=/dev/mtdblock5 init=/sbin/init.sh";
+ 		linux,initrd-start = <0x0 0x52000000>;
+ 		linux,initrd-end = <0x0 0x52941784>;
+ 	};
+diff --git a/arch/riscv/boot/dts/bouffalolab/bl808-sipeed-m1s.dts b/arch/riscv/boot/dts/bouffalolab/bl808-sipeed-m1s.dts
+index ab28c5d8a..ec1fe89ea 100644
+--- a/arch/riscv/boot/dts/bouffalolab/bl808-sipeed-m1s.dts
++++ b/arch/riscv/boot/dts/bouffalolab/bl808-sipeed-m1s.dts
+@@ -19,7 +19,7 @@ aliases {
+ 
+ 	chosen {
+ 		stdout-path = "serial0:2000000n8";
+-		bootargs = "console=ttyS0,2000000 loglevel=8 earlycon=sbi root=PARTLABEL=rootfs rootwait rootfstype=ext4";
++		bootargs = "console=ttyS0,2000000 loglevel=8 earlycon=sbi mtdparts=bflb_sflash:128K(m0-ll),128K(d0-ll),704K(sbi-uboot),64K(uboot-env),4M(kernel),8M(rootfs),3M(rootfs-data) rootfstype=squashfs root=/dev/mtdblock5 init=/sbin/init.sh";
+ 		linux,initrd-start = <0x0 0x52000000>;
+ 		linux,initrd-end = <0x0 0x52941784>;
+ 	};
+-- 
+2.42.0
+
