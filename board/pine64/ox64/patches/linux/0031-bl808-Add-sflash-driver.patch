@@ -1,0 +1,1982 @@
+From 333a2423f4b0937db63f1bd8f6eeaca03686caef Mon Sep 17 00:00:00 2001
+From: qwang <qwang@bouffalolab.com>
+Date: Sun, 8 Oct 2023 15:47:05 +0800
+Subject: [PATCH 1/2] bl808: Add sflash driver
+
+Signed-off-by: qwang <qwang@bouffalolab.com>
+---
+ .../dts/bouffalolab/bl808-pine64-ox64.dts     |    9 +-
+ .../boot/dts/bouffalolab/bl808-sipeed-m1s.dts |    9 +-
+ drivers/mtd/devices/Makefile                  |    1 +
+ drivers/mtd/devices/bl808_sflash.c            |  882 ++++++++++++++
+ drivers/mtd/devices/bl808_sflash.h            | 1017 +++++++++++++++++
+ 5 files changed, 1906 insertions(+), 12 deletions(-)
+ create mode 100644 drivers/mtd/devices/bl808_sflash.c
+ create mode 100644 drivers/mtd/devices/bl808_sflash.h
+
+diff --git a/arch/riscv/boot/dts/bouffalolab/bl808-pine64-ox64.dts b/arch/riscv/boot/dts/bouffalolab/bl808-pine64-ox64.dts
+index f7dbefd42..eb270fc11 100644
+--- a/arch/riscv/boot/dts/bouffalolab/bl808-pine64-ox64.dts
++++ b/arch/riscv/boot/dts/bouffalolab/bl808-pine64-ox64.dts
+@@ -38,12 +38,9 @@ m0_psram_reserved: m0_psram@53F00000 {
+ 		};
+ 	};
+ 
+-	xip_flash@58500000 {
+-		compatible = "mtd-rom";
+-		reg = <0x58500000 0x400000>;
+-		linux,mtd-name = "xip-flash.0";
+-		erase-size = <0x10000>;
+-		bank-width = <4>;
++	flash@2000b000 {
++		compatible = "bflb,bl808-sflash";
++		reg = <0x2000b000 0x1000 0x40001000 0x1000>;
+ 		#address-cells = <1>;
+ 		#size-cells = <1>;
+ 	};
+diff --git a/arch/riscv/boot/dts/bouffalolab/bl808-sipeed-m1s.dts b/arch/riscv/boot/dts/bouffalolab/bl808-sipeed-m1s.dts
+index 951af0ad0..ab28c5d8a 100644
+--- a/arch/riscv/boot/dts/bouffalolab/bl808-sipeed-m1s.dts
++++ b/arch/riscv/boot/dts/bouffalolab/bl808-sipeed-m1s.dts
+@@ -39,12 +39,9 @@ m0_psram_reserved: m0_psram@53F00000 {
+ 		};
+ 	};
+ 
+-	xip_flash@58500000 {
+-		compatible = "mtd-rom";
+-		reg = <0x58500000 0x400000>;
+-		linux,mtd-name = "xip-flash.0";
+-		erase-size = <0x10000>;
+-		bank-width = <4>;
++	flash@2000b000 {
++		compatible = "bflb,bl808-sflash";
++		reg = <0x2000b000 0x1000 0x40001000 0x1000>;
+ 		#address-cells = <1>;
+ 		#size-cells = <1>;
+ 	};
+diff --git a/drivers/mtd/devices/Makefile b/drivers/mtd/devices/Makefile
+index d11eb2b8b..6ff1294af 100644
+--- a/drivers/mtd/devices/Makefile
++++ b/drivers/mtd/devices/Makefile
+@@ -18,6 +18,7 @@ obj-$(CONFIG_MTD_SST25L)	+= sst25l.o
+ obj-$(CONFIG_MTD_BCM47XXSFLASH)	+= bcm47xxsflash.o
+ obj-$(CONFIG_MTD_ST_SPI_FSM)    += st_spi_fsm.o
+ obj-$(CONFIG_MTD_POWERNV_FLASH)	+= powernv_flash.o
++obj-$(CONFIG_SOC_BOUFFALOLAB)	+= bl808_sflash.o
+ 
+ 
+ CFLAGS_docg3.o			+= -I$(src)
+diff --git a/drivers/mtd/devices/bl808_sflash.c b/drivers/mtd/devices/bl808_sflash.c
+new file mode 100644
+index 000000000..a48f342ce
+--- /dev/null
++++ b/drivers/mtd/devices/bl808_sflash.c
+@@ -0,0 +1,882 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * bl808_sflash.c - Bouffalo Lab Serial Flash Controller
++ *
++ * Author: Chien Wong <qwang@bouffalolab.com>
++ *
++ * Copyright (C) Bouffalo Lab 2016-2023
++ */
++#include <linux/kernel.h>
++#include <linux/module.h>
++#include <linux/platform_device.h>
++#include <linux/mtd/mtd.h>
++#include <linux/mtd/partitions.h>
++#include <linux/mtd/spi-nor.h>
++#include <linux/sched.h>
++#include <linux/delay.h>
++#include <linux/io.h>
++#include <linux/of.h>
++
++#include "bl808_sflash.h"
++
++struct bl_sflash {
++	struct device		*dev;
++	struct mtd_info		mtd;
++	struct mutex		lock;
++	spi_flash_cfg_type	flash_cfg;
++};
++
++static uint8_t __iomem *reg_base;
++static spi_flash_cfg_type *p_flash_cfg;
++
++#define getreg32 readl
++#define putreg32(v, a) writel(v, a)
++#define BFLB_SF_CTRL_BUF_BASE (reg_base + 0x600)
++
++static uint8_t bflb_sf_ctrl_get_busy_state(void)
++{
++	uint32_t regval = 0;
++
++	regval = getreg32(reg_base + SF_CTRL_IF1_SAHB_OFFSET + SF_CTRL_IF_SAHB_0_OFFSET);
++	if (regval & SF_CTRL_IF_BUSY)
++		return 1;
++
++	return 0;
++}
++
++static void bflb_sf_ctrl_set_owner(uint8_t owner)
++{
++	uint32_t regval = 0;
++	uint32_t time_out = 0;
++
++	time_out = SF_CTRL_BUSY_STATE_TIMEOUT;
++
++	while (bflb_sf_ctrl_get_busy_state()) {
++		time_out--;
++
++		if (time_out == 0)
++			return;
++	}
++
++	regval = getreg32(reg_base + SF_CTRL_1_OFFSET);
++	/* Set owner */
++	if (owner)
++		regval |= SF_CTRL_SF_IF_FN_SEL;
++	else
++		regval &= ~SF_CTRL_SF_IF_FN_SEL;
++
++	/* Set iahb to flash interface */
++	if (owner == SF_CTRL_OWNER_IAHB)
++		regval |= SF_CTRL_SF_AHB2SIF_EN;
++	else
++		regval &= ~SF_CTRL_SF_AHB2SIF_EN;
++	putreg32(regval, reg_base + SF_CTRL_1_OFFSET);
++}
++
++static void bflb_sf_ctrl_select_clock(uint8_t sahb_sram_sel)
++{
++}
++
++static void bflb_sf_ctrl_sendcmd(struct sf_ctrl_cmd_cfg_type *cfg)
++{
++	uint32_t regval = 0;
++	uint32_t time_out = 0;
++	u8 __iomem *cmd_offset = 0;
++
++	time_out = SF_CTRL_BUSY_STATE_TIMEOUT;
++
++	while (bflb_sf_ctrl_get_busy_state()) {
++		time_out--;
++
++		if (time_out == 0)
++			return;
++	}
++
++	regval = getreg32(reg_base + SF_CTRL_1_OFFSET);
++	if (regval & SF_CTRL_SF_IF_FN_SEL)
++		return;
++	cmd_offset = reg_base + SF_CTRL_IF1_SAHB_OFFSET;
++
++	/* Clear trigger */
++	regval = getreg32(cmd_offset + SF_CTRL_IF_SAHB_0_OFFSET);
++	regval &= ~SF_CTRL_IF_0_TRIG;
++	putreg32(regval, cmd_offset + SF_CTRL_IF_SAHB_0_OFFSET);
++
++	/* Copy command buffer */
++	putreg32(cfg->cmd_buf[0], cmd_offset + SF_CTRL_IF_SAHB_1_OFFSET);
++	putreg32(cfg->cmd_buf[1], cmd_offset + SF_CTRL_IF_SAHB_2_OFFSET);
++
++	regval = getreg32(cmd_offset + SF_CTRL_IF_SAHB_0_OFFSET);
++	/* Configure SPI and IO mode*/
++	if (cfg->cmd_mode == SF_CTRL_CMD_1_LINE)
++		regval &= ~SF_CTRL_IF_0_QPI_MODE_EN;
++	else
++		regval |= SF_CTRL_IF_0_QPI_MODE_EN;
++
++	regval &= ~SF_CTRL_IF_0_SPI_MODE_MASK;
++	if (cfg->addr_mode == SF_CTRL_ADDR_1_LINE) {
++		if (cfg->data_mode == SF_CTRL_DATA_1_LINE)
++			regval |= (SF_CTRL_NIO_MODE << SF_CTRL_IF_0_SPI_MODE_SHIFT);
++		else if (cfg->data_mode == SF_CTRL_DATA_2_LINES)
++			regval |= (SF_CTRL_DO_MODE << SF_CTRL_IF_0_SPI_MODE_SHIFT);
++		else if (cfg->data_mode == SF_CTRL_DATA_4_LINES)
++			regval |= (SF_CTRL_QO_MODE << SF_CTRL_IF_0_SPI_MODE_SHIFT);
++	} else if (cfg->addr_mode == SF_CTRL_ADDR_2_LINES) {
++		regval |= (SF_CTRL_DIO_MODE << SF_CTRL_IF_0_SPI_MODE_SHIFT);
++	} else if (cfg->addr_mode == SF_CTRL_ADDR_4_LINES) {
++		regval |= (SF_CTRL_QIO_MODE << SF_CTRL_IF_0_SPI_MODE_SHIFT);
++	}
++
++	/* Configure cmd */
++	regval |= SF_CTRL_IF_0_CMD_EN;
++	regval &= ~SF_CTRL_IF_0_CMD_BYTE_MASK;
++
++	/* Configure address */
++	regval &= ~SF_CTRL_IF_0_ADR_BYTE_MASK;
++	if (cfg->addr_size != 0) {
++		regval |= SF_CTRL_IF_0_ADR_EN;
++		regval |= ((cfg->addr_size - 1) << SF_CTRL_IF_0_ADR_BYTE_SHIFT);
++	} else {
++		regval &= ~SF_CTRL_IF_0_ADR_EN;
++	}
++
++	/* Configure dummy */
++	regval &= ~SF_CTRL_IF_0_DMY_BYTE_MASK;
++	if (cfg->dummy_clks != 0) {
++		regval |= SF_CTRL_IF_0_DMY_EN;
++		regval |= ((cfg->dummy_clks - 1) << SF_CTRL_IF_0_DMY_BYTE_SHIFT);
++	} else {
++		regval &= ~SF_CTRL_IF_0_DMY_EN;
++	}
++
++	/* Configure data */
++	regval &= ~SF_CTRL_IF_0_DAT_BYTE_MASK;
++	if (cfg->nb_data != 0) {
++		regval |= SF_CTRL_IF_0_DAT_EN;
++		regval |= ((cfg->nb_data - 1) << SF_CTRL_IF_0_DAT_BYTE_SHIFT);
++	} else {
++		regval &= ~SF_CTRL_IF_0_DAT_EN;
++	}
++
++	/* Set read write flag */
++	if (cfg->rw_flag)
++		regval |= SF_CTRL_IF_0_DAT_RW;
++	else
++		regval &= ~SF_CTRL_IF_0_DAT_RW;
++	putreg32(regval, cmd_offset + SF_CTRL_IF_SAHB_0_OFFSET);
++
++	bflb_sf_ctrl_select_clock(1);
++
++	/* Trigger */
++	regval |= SF_CTRL_IF_0_TRIG;
++	putreg32(regval, cmd_offset + SF_CTRL_IF_SAHB_0_OFFSET);
++
++	time_out = SF_CTRL_BUSY_STATE_TIMEOUT;
++	while (bflb_sf_ctrl_get_busy_state()) {
++		time_out--;
++
++		if (time_out == 0) {
++			bflb_sf_ctrl_select_clock(0);
++			return;
++		}
++	}
++
++	bflb_sf_ctrl_select_clock(0);
++}
++
++static int bflb_sflash_read_reg(spi_flash_cfg_type *flash_cfg, uint8_t reg_index, uint8_t *reg_value, uint8_t reg_len)
++{
++	uint8_t __iomem *const flash_ctrl_buf = BFLB_SF_CTRL_BUF_BASE;
++	struct sf_ctrl_cmd_cfg_type flash_cmd;
++	uint32_t cnt = 0;
++
++	memset(&flash_cmd, 0, sizeof(flash_cmd));
++
++	flash_cmd.cmd_buf[0] = (flash_cfg->read_reg_cmd[reg_index]) << 24;
++	flash_cmd.rw_flag = SF_CTRL_READ;
++	flash_cmd.nb_data = reg_len;
++
++	bflb_sf_ctrl_sendcmd(&flash_cmd);
++
++	while (bflb_sf_ctrl_get_busy_state()) {
++		udelay(1);
++		cnt++;
++
++		if (cnt > 1000)
++			return -1;
++	}
++
++	memcpy_fromio(reg_value, flash_ctrl_buf, reg_len);
++	return 0;
++}
++
++static int bflb_sflash_write_enable(spi_flash_cfg_type *flash_cfg)
++{
++	uint32_t stat = 0;
++	struct sf_ctrl_cmd_cfg_type flash_cmd;
++
++	memset(&flash_cmd, 0, sizeof(flash_cmd));
++
++	/* Write enable*/
++	flash_cmd.cmd_buf[0] = (flash_cfg->write_enable_cmd) << 24;
++	/* rw_flag don't care */
++	flash_cmd.rw_flag = SF_CTRL_READ;
++	bflb_sf_ctrl_sendcmd(&flash_cmd);
++
++	bflb_sflash_read_reg(flash_cfg, flash_cfg->wr_enable_index, (uint8_t *)&stat, flash_cfg->wr_enable_read_reg_len);
++
++	if ((stat & (1 << flash_cfg->wr_enable_bit)) != 0)
++		return 0;
++
++	return -1;
++}
++
++static int bflb_sflash_read(spi_flash_cfg_type *flash_cfg, uint8_t io_mode, uint8_t cont_read, uint32_t addr, uint8_t *data, uint32_t len)
++{
++	uint8_t __iomem *const flash_ctrl_buf = BFLB_SF_CTRL_BUF_BASE;
++	uint32_t cur_len = 0, i = 0;
++	uint8_t cmd = 0, dummy_clks = 0;
++	uint32_t timeout = 0;
++	struct sf_ctrl_cmd_cfg_type flash_cmd;
++	uint8_t no_read_mode_cfg = 0;
++	uint8_t c_read_support = 0;
++	uint8_t is_32bits_addr = 0;
++
++	memset(&flash_cmd, 0, sizeof(flash_cmd));
++
++	if (io_mode == SF_CTRL_NIO_MODE) {
++		cmd = flash_cfg->fast_read_cmd;
++		dummy_clks = flash_cfg->fr_dmy_clk;
++	} else if (io_mode == SF_CTRL_DO_MODE) {
++		flash_cmd.data_mode = SF_CTRL_DATA_2_LINES;
++		cmd = flash_cfg->fast_read_do_cmd;
++		dummy_clks = flash_cfg->fr_do_dmy_clk;
++	} else if (io_mode == SF_CTRL_DIO_MODE) {
++		flash_cmd.addr_mode = SF_CTRL_ADDR_2_LINES;
++		flash_cmd.data_mode = SF_CTRL_DATA_2_LINES;
++		cmd = flash_cfg->fast_read_dio_cmd;
++		dummy_clks = flash_cfg->fr_dio_dmy_clk;
++	} else if (io_mode == SF_CTRL_QO_MODE) {
++		flash_cmd.data_mode = SF_CTRL_DATA_4_LINES;
++		cmd = flash_cfg->fast_read_qo_cmd;
++		dummy_clks = flash_cfg->fr_qo_dmy_clk;
++	} else if (io_mode == SF_CTRL_QIO_MODE) {
++		flash_cmd.addr_mode = SF_CTRL_ADDR_4_LINES;
++		flash_cmd.data_mode = SF_CTRL_DATA_4_LINES;
++		cmd = flash_cfg->fast_read_qio_cmd;
++		dummy_clks = flash_cfg->fr_qio_dmy_clk;
++	} else {
++		return -1;
++	}
++
++	is_32bits_addr = (flash_cfg->io_mode & 0x20);
++	/* Prepare command */
++	flash_cmd.rw_flag = SF_CTRL_READ;
++	flash_cmd.addr_size = 3;
++
++	if (is_32bits_addr > 0)
++		flash_cmd.addr_size++;
++
++	if (io_mode == SF_CTRL_QIO_MODE || io_mode == SF_CTRL_DIO_MODE) {
++		no_read_mode_cfg = flash_cfg->c_read_support & 0x02;
++		c_read_support = flash_cfg->c_read_support & 0x01;
++
++		if (no_read_mode_cfg == 0) {
++			/* Read mode must be set */
++			if (c_read_support == 0) {
++				/* Not support cont read, but we still need set read mode(winbond 80dv) */
++				if (is_32bits_addr > 0)
++					flash_cmd.cmd_buf[1] |= (flash_cfg->c_read_mode << 16);
++				else
++					flash_cmd.cmd_buf[1] = (flash_cfg->c_read_mode << 24);
++			} else {
++				/* Flash support cont read, setting depend on user parameter */
++				if (cont_read) {
++					if (is_32bits_addr > 0)
++						flash_cmd.cmd_buf[1] |= (flash_cfg->c_read_mode << 16);
++					else
++						flash_cmd.cmd_buf[1] = (flash_cfg->c_read_mode << 24);
++				} else {
++					if (is_32bits_addr > 0)
++						flash_cmd.cmd_buf[1] |= ((!flash_cfg->c_read_mode) << 16);
++					else
++						flash_cmd.cmd_buf[1] = ((!flash_cfg->c_read_mode) << 24);
++				}
++			}
++
++			flash_cmd.addr_size++;
++		}
++	}
++
++	flash_cmd.dummy_clks = dummy_clks;
++
++	/* Read data */
++	for (i = 0; i < len;) {
++		/* Prepare command */
++		if (is_32bits_addr > 0) {
++			flash_cmd.cmd_buf[0] = (cmd << 24) | (addr >> 8);
++			flash_cmd.cmd_buf[1] |= (addr << 24);
++		} else {
++			flash_cmd.cmd_buf[0] = (cmd << 24) | (addr);
++		}
++
++		cur_len = len - i;
++
++		if (cur_len >= NOR_FLASH_CTRL_BUF_SIZE) {
++			cur_len = NOR_FLASH_CTRL_BUF_SIZE;
++			flash_cmd.nb_data = cur_len;
++		} else {
++			/* Make sf_ctrl word read */
++			flash_cmd.nb_data = ((cur_len + 3) >> 2) << 2;
++		}
++
++		bflb_sf_ctrl_sendcmd(&flash_cmd);
++
++		timeout = SF_CTRL_BUSY_STATE_TIMEOUT;
++
++		while (bflb_sf_ctrl_get_busy_state()) {
++			timeout--;
++
++			if (timeout == 0)
++				return -2;
++		}
++
++		memcpy_fromio(data, flash_ctrl_buf, cur_len);
++
++		addr += cur_len;
++		i += cur_len;
++		data += cur_len;
++	}
++
++	return 0;
++}
++
++static int bflb_sflash_busy(spi_flash_cfg_type *flash_cfg)
++{
++	uint32_t stat = 0;
++
++	bflb_sflash_read_reg(flash_cfg, flash_cfg->busy_index, (uint8_t *)&stat, flash_cfg->busy_read_reg_len);
++
++	if ((stat & (1 << flash_cfg->busy_bit)) == 0)
++		return 0;
++
++	return 1;
++}
++
++static int bflb_sflash_program(spi_flash_cfg_type *flash_cfg, uint8_t io_mode, uint32_t addr, const uint8_t *data, uint32_t len)
++{
++	uint8_t __iomem *const flash_ctrl_buf = BFLB_SF_CTRL_BUF_BASE;
++	uint32_t i = 0, cur_len = 0;
++	uint32_t cnt = 0;
++	int stat = 0;
++	uint8_t is_32bits_addr = 0;
++	uint8_t cmd = 0;
++	struct sf_ctrl_cmd_cfg_type flash_cmd;
++
++	memset(&flash_cmd, 0, sizeof(flash_cmd));
++
++	if (io_mode == SF_CTRL_NIO_MODE || io_mode == SF_CTRL_DO_MODE || io_mode == SF_CTRL_DIO_MODE) {
++		cmd = flash_cfg->page_program_cmd;
++	} else if (io_mode == SF_CTRL_QIO_MODE || io_mode == SF_CTRL_QO_MODE) {
++		flash_cmd.addr_mode = flash_cfg->qpp_addr_mode;
++		flash_cmd.data_mode = SF_CTRL_DATA_4_LINES;
++		cmd = flash_cfg->qpage_program_cmd;
++	} else {
++		return -1;
++	}
++
++	is_32bits_addr = (flash_cfg->io_mode & 0x20);
++	/* Prepare command */
++	flash_cmd.rw_flag = SF_CTRL_WRITE;
++	flash_cmd.addr_size = 3;
++
++	if (is_32bits_addr > 0)
++		flash_cmd.addr_size++;
++
++	for (i = 0; i < len;) {
++		/* Write enable is needed for every program */
++		stat = bflb_sflash_write_enable(flash_cfg);
++
++		if (stat != 0)
++			return stat;
++
++		/* Get current programmed length within page size */
++		cur_len = flash_cfg->page_size - addr % flash_cfg->page_size;
++
++		if (cur_len > len - i)
++			cur_len = len - i;
++
++		/* Prepare command */
++		memcpy_toio(flash_ctrl_buf, data, cur_len);
++
++		if (is_32bits_addr > 0) {
++			flash_cmd.cmd_buf[0] = (cmd << 24) | (addr >> 8);
++			flash_cmd.cmd_buf[1] = (addr << 24);
++		} else {
++			flash_cmd.cmd_buf[0] = (cmd << 24) | (addr);
++		}
++
++		flash_cmd.nb_data = cur_len;
++
++		bflb_sf_ctrl_sendcmd(&flash_cmd);
++
++		/* Adjust address and programmed length */
++		addr += cur_len;
++		i += cur_len;
++		data += cur_len;
++
++		/* Wait for write done */
++		cnt = 0;
++
++		while (bflb_sflash_busy(flash_cfg)) {
++			usleep_range(80, 100);
++			cnt++;
++
++			if (cnt > flash_cfg->time_page_pgm * 20)
++				return -1;
++		}
++	}
++
++	return 0;
++}
++
++static int bflb_sflash_sz_erase(spi_flash_cfg_type *flash_cfg, uint32_t blk_num, uint32_t blk_size, uint8_t erase_cmd, uint32_t time_limit)
++{
++	struct sf_ctrl_cmd_cfg_type flash_cmd;
++	uint32_t cnt = 0;
++	uint8_t is_32bits_addr = 0;
++	int stat = bflb_sflash_write_enable(flash_cfg);
++
++	if (stat != 0)
++		return stat;
++
++	memset(&flash_cmd, 0, sizeof(flash_cmd));
++
++	is_32bits_addr = (flash_cfg->io_mode & 0x20);
++	/* rw_flag don't care */
++	flash_cmd.rw_flag = SF_CTRL_READ;
++	flash_cmd.addr_size = 3;
++
++	if (is_32bits_addr > 0) {
++		flash_cmd.addr_size++;
++		flash_cmd.cmd_buf[0] = (erase_cmd << 24) | ((blk_size * blk_num) >> 8);
++		flash_cmd.cmd_buf[1] = ((blk_size * blk_num) << 24);
++	} else {
++		flash_cmd.cmd_buf[0] = (erase_cmd << 24) | (blk_size * blk_num);
++	}
++
++	bflb_sf_ctrl_sendcmd(&flash_cmd);
++
++	while (bflb_sflash_busy(flash_cfg)) {
++		usleep_range(450, 500);
++		cnt++;
++
++		if (cnt > time_limit * 3)
++			return -1;
++	}
++
++	return 0;
++}
++
++static int bflb_sflash_erase(spi_flash_cfg_type *flash_cfg, uint32_t start_addr, uint32_t end_addr)
++{
++	uint32_t len = 0;
++	uint32_t erase_len = 0;
++	uint8_t ret = 0;
++
++	if (start_addr > end_addr)
++		return -1;
++
++	while (start_addr <= end_addr) {
++		len = end_addr - start_addr + 1;
++
++		if (flash_cfg->blk64_erase_cmd != BFLB_SPIFLASH_CMD_INVALID &&
++				(start_addr & (BFLB_SPIFLASH_BLK64K_SIZE - 1)) == 0 &&
++				len > (BFLB_SPIFLASH_BLK64K_SIZE - flash_cfg->sector_size * 1024)) {
++			/* 64K margin address,and length > 64K-sector size, erase one first */
++			ret = bflb_sflash_sz_erase(flash_cfg, start_addr / BFLB_SPIFLASH_BLK64K_SIZE, BFLB_SPIFLASH_BLK64K_SIZE, flash_cfg->blk64_erase_cmd, flash_cfg->time_e_64k);
++			erase_len = BFLB_SPIFLASH_BLK64K_SIZE;
++		} else if (flash_cfg->blk32_erase_cmd != BFLB_SPIFLASH_CMD_INVALID &&
++				(start_addr & (BFLB_SPIFLASH_BLK32K_SIZE - 1)) == 0 &&
++				len > (BFLB_SPIFLASH_BLK32K_SIZE - flash_cfg->sector_size * 1024)) {
++			/* 32K margin address,and length > 32K-sector size, erase one first */
++			ret = bflb_sflash_sz_erase(flash_cfg, start_addr / BFLB_SPIFLASH_BLK32K_SIZE, BFLB_SPIFLASH_BLK32K_SIZE, flash_cfg->blk32_erase_cmd, flash_cfg->time_e_32k);
++			erase_len = BFLB_SPIFLASH_BLK32K_SIZE;
++		} else {
++			/* Sector erase */
++			start_addr = ((start_addr) & (~(flash_cfg->sector_size * 1024 - 1)));
++			ret = bflb_sflash_sz_erase(flash_cfg, start_addr / flash_cfg->sector_size / 1024, flash_cfg->sector_size * 1024, flash_cfg->sector_erase_cmd, flash_cfg->time_e_sector);
++			erase_len = flash_cfg->sector_size * 1024;
++		}
++
++		start_addr += erase_len;
++
++		if (ret != 0)
++			return -1;
++	}
++
++	return 0;
++}
++
++static void bflb_sflash_reset_continue_read(spi_flash_cfg_type *flash_cfg)
++{
++	struct sf_ctrl_cmd_cfg_type flash_cmd;
++
++	memset(&flash_cmd, 0, sizeof(flash_cmd));
++
++	/* Reset continous read */
++	memset(&flash_cmd.cmd_buf[0], flash_cfg->reset_c_read_cmd, 4);
++	/* rw_flag don't care */
++	flash_cmd.rw_flag = SF_CTRL_READ;
++	flash_cmd.addr_size = flash_cfg->reset_c_read_cmd_size;
++	bflb_sf_ctrl_sendcmd(&flash_cmd);
++}
++
++static void bflb_sflash_disable_burst_wrap(spi_flash_cfg_type *flash_cfg)
++{
++	uint8_t __iomem *const flash_ctrl_buf = BFLB_SF_CTRL_BUF_BASE;
++	uint8_t cmd = 0, dummy_clks = 0;
++	uint32_t wrap_data = 0;
++	struct sf_ctrl_cmd_cfg_type flash_cmd;
++
++	memset(&flash_cmd, 0, sizeof(flash_cmd));
++
++	flash_cmd.addr_mode = flash_cfg->de_burst_wrap_data_mode;
++	flash_cmd.data_mode = flash_cfg->de_burst_wrap_data_mode;
++	dummy_clks = flash_cfg->de_burst_wrap_cmd_dmy_clk;
++	cmd = flash_cfg->de_burst_wrap_cmd;
++	wrap_data = flash_cfg->de_burst_wrap_data;
++	memcpy_toio(flash_ctrl_buf, &wrap_data, 4);
++	flash_cmd.cmd_buf[0] = (cmd << 24);
++	flash_cmd.rw_flag = SF_CTRL_WRITE;
++	flash_cmd.dummy_clks = dummy_clks;
++	flash_cmd.nb_data = 1;
++
++	bflb_sf_ctrl_sendcmd(&flash_cmd);
++}
++
++static void bflb_sf_ctrl_32bits_addr_en(uint8_t en32_bits_addr)
++{
++	uint32_t regval = 0;
++
++	regval = getreg32(reg_base + SF_CTRL_0_OFFSET);
++	if (en32_bits_addr)
++		regval |= SF_CTRL_SF_IF_32B_ADR_EN;
++	else
++		regval &= ~SF_CTRL_SF_IF_32B_ADR_EN;
++	putreg32(regval, reg_base + SF_CTRL_0_OFFSET);
++}
++
++static void bflb_sf_ctrl_set_flash_image_offset(uint32_t addr_offset, uint8_t group, uint8_t bank)
++{
++	if (bank == SF_CTRL_FLASH_BANK0) {
++		if (group)
++			putreg32(addr_offset, reg_base + SF_CTRL_SF_ID1_OFFSET_OFFSET);
++		else
++			putreg32(addr_offset, reg_base + SF_CTRL_SF_ID0_OFFSET_OFFSET);
++	}
++}
++
++static int bflb_sflash_set_32bits_addr_mode(spi_flash_cfg_type *flash_cfg, uint8_t en_32bits_addr)
++{
++	struct sf_ctrl_cmd_cfg_type flash_cmd;
++	uint8_t cmd = 0;
++
++	if ((flash_cfg->io_mode & 0x20) == 0)
++		return -1;
++
++	memset(&flash_cmd, 0, sizeof(flash_cmd));
++
++	bflb_sf_ctrl_32bits_addr_en(en_32bits_addr);
++
++	if (en_32bits_addr)
++		cmd = flash_cfg->enter_32bits_addr_cmd;
++	else
++		cmd = flash_cfg->exit_32bits_addr_cmd;
++
++	flash_cmd.cmd_buf[0] = (cmd << 24);
++	/* rw_flag don't care */
++	flash_cmd.rw_flag = SF_CTRL_READ;
++
++	bflb_sf_ctrl_sendcmd(&flash_cmd);
++
++	return 0;
++}
++
++static int bflb_sflash_write_reg(spi_flash_cfg_type *flash_cfg, uint8_t reg_index, uint8_t *reg_value, uint8_t reg_len)
++{
++	uint8_t __iomem *const flash_ctrl_buf = BFLB_SF_CTRL_BUF_BASE;
++	uint32_t cnt = 0;
++	struct sf_ctrl_cmd_cfg_type flash_cmd;
++
++	memset(&flash_cmd, 0, sizeof(flash_cmd));
++
++	memcpy_toio(flash_ctrl_buf, reg_value, reg_len);
++
++	flash_cmd.cmd_buf[0] = (flash_cfg->write_reg_cmd[reg_index]) << 24;
++	flash_cmd.rw_flag = SF_CTRL_WRITE;
++	flash_cmd.nb_data = reg_len;
++
++	bflb_sf_ctrl_sendcmd(&flash_cmd);
++
++	/* take 40ms for tw(write status register) as default */
++	while (bflb_sflash_busy(flash_cfg)) {
++		usleep_range(80, 100);
++		cnt++;
++
++		if (cnt > 400)
++			return -1;
++	}
++
++	return 0;
++}
++
++static int bflb_sflash_qspi_enable(spi_flash_cfg_type *flash_cfg)
++{
++	uint32_t stat = 0, ret = 0;
++
++	if (flash_cfg->qe_read_reg_len == 0) {
++		ret = bflb_sflash_write_enable(flash_cfg);
++
++		if (ret == 0)
++			return -1;
++
++		bflb_sflash_write_reg(flash_cfg, flash_cfg->qe_index, (uint8_t *)&stat, flash_cfg->qe_write_reg_len);
++		return 0;
++	}
++
++	bflb_sflash_read_reg(flash_cfg, flash_cfg->qe_index, (uint8_t *)&stat, flash_cfg->qe_read_reg_len);
++
++	if (flash_cfg->qe_data == 0) {
++		if ((stat & (1 << flash_cfg->qe_bit)) != 0)
++			return 0;
++	} else {
++		if (((stat >> (flash_cfg->qe_bit & 0x08)) & 0xff) == flash_cfg->qe_data)
++			return 0;
++	}
++
++	if (flash_cfg->qe_write_reg_len != 1) {
++		/* This is read r0,read r1 write r0,r1 case */
++		bflb_sflash_read_reg(flash_cfg, 0, (uint8_t *)&stat, 1);
++		bflb_sflash_read_reg(flash_cfg, 1, ((uint8_t *)&stat) + 1, 1);
++
++		if (flash_cfg->qe_data == 0) {
++			stat |= (1 << (flash_cfg->qe_bit + 8 * flash_cfg->qe_index));
++		} else {
++			stat = stat & (~(0xff << (8 * flash_cfg->qe_index)));
++			stat |= (flash_cfg->qe_data << (8 * flash_cfg->qe_index));
++		}
++	} else {
++		if (flash_cfg->qe_data == 0)
++			stat |= (1 << (flash_cfg->qe_bit % 8));
++		else
++			stat = flash_cfg->qe_data;
++	}
++
++	ret = bflb_sflash_write_enable(flash_cfg);
++
++	if (ret != 0)
++		return -1;
++
++	bflb_sflash_write_reg(flash_cfg, flash_cfg->qe_index, (uint8_t *)&stat, flash_cfg->qe_write_reg_len);
++	bflb_sflash_read_reg(flash_cfg, flash_cfg->qe_index, (uint8_t *)&stat, flash_cfg->qe_read_reg_len);
++
++	if (flash_cfg->qe_data == 0) {
++		if ((stat & (1 << flash_cfg->qe_bit)) != 0)
++			return 0;
++	} else {
++		if (((stat >> (flash_cfg->qe_bit & 0x08)) & 0xff) == flash_cfg->qe_data)
++			return 0;
++	}
++
++	return -1;
++}
++
++static int bl_sflash_mtd_read(struct mtd_info *mtd, loff_t from, size_t len,
++			      size_t *retlen, u_char *buf)
++{
++	struct bl_sflash *sf = dev_get_drvdata(mtd->dev.parent);
++	uint8_t io_mode = p_flash_cfg->io_mode & 0xf;
++	int ret;
++
++	dev_dbg(sf->dev, "%s from 0x%08x, len %zd\n",
++		__func__, (u32)from, len);
++
++	mutex_lock(&sf->lock);
++	ret = bflb_sflash_read(p_flash_cfg, io_mode, 0, from, buf, len);
++	*retlen = len;
++	mutex_unlock(&sf->lock);
++
++	return ret;
++}
++
++static int bl_sflash_mtd_write(struct mtd_info *mtd, loff_t to, size_t len,
++			   size_t *retlen, const u_char *buf)
++{
++	struct bl_sflash *sf = dev_get_drvdata(mtd->dev.parent);
++	uint8_t io_mode = p_flash_cfg->io_mode & 0xf;
++
++	int ret = 0;
++
++	dev_dbg(sf->dev, "%s to 0x%08x, len %zd\n", __func__, (u32)to, len);
++
++	mutex_lock(&sf->lock);
++	ret = bflb_sflash_program(p_flash_cfg, io_mode, to, buf, len);
++	*retlen = len;
++	mutex_unlock(&sf->lock);
++
++	return ret;
++}
++
++static int bl_sflash_mtd_erase(struct mtd_info *mtd, struct erase_info *instr)
++{
++	struct bl_sflash *sf = dev_get_drvdata(mtd->dev.parent);
++	u32 addr, len;
++	int ret;
++
++	dev_dbg(sf->dev, "%s at 0x%llx, len %lld\n", __func__,
++		(long long)instr->addr, (long long)instr->len);
++
++	addr = instr->addr;
++	len = instr->len;
++
++	mutex_lock(&sf->lock);
++	ret = bflb_sflash_erase(p_flash_cfg, addr, addr + len - 1);
++	mutex_unlock(&sf->lock);
++
++	return ret;
++}
++
++static int bl_sflash_init(struct bl_sflash *sf, struct xram_flash_cfg __iomem *cfg)
++{
++	memcpy_fromio(&sf->flash_cfg, &cfg->flash_cfg, sizeof(sf->flash_cfg));
++	p_flash_cfg = &sf->flash_cfg;
++
++	print_hex_dump(KERN_DEBUG, "flash_cfg: ", DUMP_PREFIX_OFFSET, 16, 1, p_flash_cfg, sizeof(*p_flash_cfg), false);
++	printk(KERN_DEBUG "flash_cfg: size %u", cfg->flash_size);
++
++	bflb_sf_ctrl_set_owner(SF_CTRL_OWNER_SAHB);
++	/* Exit form continous read for accepting command */
++	bflb_sflash_reset_continue_read(p_flash_cfg);
++	/* For disable command that is setting register instead of send command, we need write enable */
++	bflb_sflash_disable_burst_wrap(p_flash_cfg);
++	/* Enable 32Bits addr mode again in case reset command make it reset */
++	bflb_sflash_set_32bits_addr_mode(p_flash_cfg, 1);
++	if ((p_flash_cfg->io_mode & 0x0f) == SF_CTRL_QO_MODE || (p_flash_cfg->io_mode & 0x0f) == SF_CTRL_QIO_MODE)
++		/* Enable QE again in case reset command make it reset */
++		bflb_sflash_qspi_enable(p_flash_cfg);
++	/* Deburst again to make sure */
++	bflb_sflash_disable_burst_wrap(p_flash_cfg);
++
++	/* Clear offset setting */
++	bflb_sf_ctrl_set_flash_image_offset(0, 0, 0);
++	return 0;
++}
++
++static int bl_sflash_probe(struct platform_device *pdev)
++{
++	struct device_node *np = pdev->dev.of_node;
++	struct resource *res;
++	struct resource *res_cfg;
++	struct xram_flash_cfg __iomem *cfg;
++	uint32_t flash_size;
++	struct bl_sflash *sf;
++	int ret;
++
++	if (!np) {
++		dev_err(&pdev->dev, "No DT found\n");
++		return -EINVAL;
++	}
++
++	sf = devm_kzalloc(&pdev->dev, sizeof(*sf), GFP_KERNEL);
++	if (!sf)
++		return -ENOMEM;
++
++	sf->dev = &pdev->dev;
++
++	platform_set_drvdata(pdev, sf);
++
++	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
++	if (!res) {
++		dev_err(&pdev->dev, "Resource not found\n");
++		devm_kfree(&pdev->dev, sf);
++		return -ENODEV;
++	}
++
++	res_cfg = platform_get_resource(pdev, IORESOURCE_MEM, 1);
++	if (!res) {
++		dev_err(&pdev->dev, "flash cfg addr not found\n");
++		devm_kfree(&pdev->dev, sf);
++		return -ENODEV;
++	}
++
++	reg_base = devm_ioremap_resource(&pdev->dev, res);
++	if (IS_ERR(reg_base)) {
++		devm_kfree(&pdev->dev, sf);
++		return PTR_ERR(reg_base);
++	}
++
++	cfg = devm_ioremap_resource(&pdev->dev, res_cfg);
++	if (IS_ERR(cfg)) {
++		devm_kfree(&pdev->dev, sf);
++		devm_ioremap_release(&pdev->dev, reg_base);
++		return PTR_ERR(cfg);
++	}
++
++	mutex_init(&sf->lock);
++
++	ret = bl_sflash_init(sf, cfg);
++	memcpy_fromio(&flash_size, &cfg->flash_size, sizeof(flash_size));
++	devm_ioremap_release(&pdev->dev, cfg);
++	if (ret) {
++		dev_err(&pdev->dev, "Failed to initialise sflash Controller\n");
++		devm_kfree(&pdev->dev, sf);
++		devm_ioremap_release(&pdev->dev, reg_base);
++		return ret;
++	}
++
++	sf->mtd.name		= "bflb_sflash";
++	sf->mtd.dev.parent	= &pdev->dev;
++	mtd_set_of_node(&sf->mtd, np);
++	sf->mtd.type		= MTD_NORFLASH;
++	sf->mtd.writesize	= 1;
++	sf->mtd.writebufsize	= NOR_FLASH_CTRL_BUF_SIZE;
++	sf->mtd.flags		= MTD_CAP_NORFLASH;
++	sf->mtd.size		= flash_size;
++	sf->mtd.erasesize	= p_flash_cfg->sector_size * 1024;
++
++	sf->mtd._read  = bl_sflash_mtd_read;
++	sf->mtd._write = bl_sflash_mtd_write;
++	sf->mtd._erase = bl_sflash_mtd_erase;
++
++	return mtd_device_register(&sf->mtd, NULL, 0);
++}
++
++static int bl_sflash_remove(struct platform_device *pdev)
++{
++	struct bl_sflash *sf = platform_get_drvdata(pdev);
++
++	WARN_ON(mtd_device_unregister(&sf->mtd));
++
++	return 0;
++}
++
++static const struct of_device_id bl_sflash_match[] = {
++	{ .compatible = "bflb,bl808-sflash", },
++	{},
++};
++MODULE_DEVICE_TABLE(of, bl_match);
++
++static struct platform_driver bl_sflash_driver = {
++	.probe		= bl_sflash_probe,
++	.remove		= bl_sflash_remove,
++	.driver		= {
++		.name	= "bflb-sflash",
++		.of_match_table = bl_sflash_match,
++	},
++};
++module_platform_driver(bl_sflash_driver);
++
++MODULE_AUTHOR("Chien Wong <qwang@bouffalolab.com>");
++MODULE_DESCRIPTION("Bouffalo Lab sflash driver");
++MODULE_LICENSE("GPL");
+diff --git a/drivers/mtd/devices/bl808_sflash.h b/drivers/mtd/devices/bl808_sflash.h
+new file mode 100644
+index 000000000..86c2a8893
+--- /dev/null
++++ b/drivers/mtd/devices/bl808_sflash.h
+@@ -0,0 +1,1017 @@
++#ifndef _BL808_SFLASH_H
++#define _BL808_SFLASH_H
++
++#define BFLB_SF_CTRL_32BITS_ADDR_ENABLE
++#define BFLB_SF_CTRL_AES_XTS_ENABLE
++
++#define NOR_FLASH_CTRL_BUF_SIZE	256
++
++#define BFLB_SPIFLASH_BLK32K_SIZE (32 * 1024)
++#define BFLB_SPIFLASH_BLK64K_SIZE (64 * 1024)
++#define BFLB_SPIFLASH_CMD_INVALID 0xff
++
++#define SF_CTRL_OWNER_SAHB                              0    /*!< System AHB bus control serial flash controller */
++#define SF_CTRL_OWNER_IAHB                              1    /*!< I-Code AHB bus control serial flash controller */
++
++#define SF_CTRL_BUSY_STATE_TIMEOUT  (5 * 320 * 1000)
++
++#define SF_CTRL_0_OFFSET                                        (0x0)/* sf_ctrl_0 */
++#define SF_CTRL_1_OFFSET                                        (0x4)/* sf_ctrl_1 */
++#define SF_CTRL_SF_IF_SAHB_0_OFFSET                             (0x8)/* sf_if_sahb_0 */
++#define SF_CTRL_SF_IF_SAHB_1_OFFSET                             (0xC)/* sf_if_sahb_1 */
++#define SF_CTRL_SF_IF_SAHB_2_OFFSET                             (0x10)/* sf_if_sahb_2 */
++#define SF_CTRL_SF_IF_IAHB_0_OFFSET                             (0x14)/* sf_if_iahb_0 */
++#define SF_CTRL_SF_IF_IAHB_1_OFFSET                             (0x18)/* sf_if_iahb_1 */
++#define SF_CTRL_SF_IF_IAHB_2_OFFSET                             (0x1C)/* sf_if_iahb_2 */
++#define SF_CTRL_SF_IF_STATUS_0_OFFSET                           (0x20)/* sf_if_status_0 */
++#define SF_CTRL_SF_IF_STATUS_1_OFFSET                           (0x24)/* sf_if_status_1 */
++#define SF_CTRL_SF_AES_OFFSET                                   (0x28)/* sf_aes */
++#define SF_CTRL_SF_AHB2SIF_STATUS_OFFSET                        (0x2C)/* sf_ahb2sif_status */
++#define SF_CTRL_SF_IF_IO_DLY_0_OFFSET                           (0x30)/* sf_if_io_dly_0 */
++#define SF_CTRL_SF_IF_IO_DLY_1_OFFSET                           (0x34)/* sf_if_io_dly_1 */
++#define SF_CTRL_SF_IF_IO_DLY_2_OFFSET                           (0x38)/* sf_if_io_dly_2 */
++#define SF_CTRL_SF_IF_IO_DLY_3_OFFSET                           (0x3C)/* sf_if_io_dly_3 */
++#define SF_CTRL_SF_IF_IO_DLY_4_OFFSET                           (0x40)/* sf_if_io_dly_4 */
++#define SF_CTRL_SF_RESERVED_OFFSET                              (0x44)/* sf_reserved */
++#define SF_CTRL_SF2_IF_IO_DLY_0_OFFSET                          (0x48)/* sf2_if_io_dly_0 */
++#define SF_CTRL_SF2_IF_IO_DLY_1_OFFSET                          (0x4C)/* sf2_if_io_dly_1 */
++#define SF_CTRL_SF2_IF_IO_DLY_2_OFFSET                          (0x50)/* sf2_if_io_dly_2 */
++#define SF_CTRL_SF2_IF_IO_DLY_3_OFFSET                          (0x54)/* sf2_if_io_dly_3 */
++#define SF_CTRL_SF2_IF_IO_DLY_4_OFFSET                          (0x58)/* sf2_if_io_dly_4 */
++#define SF_CTRL_SF3_IF_IO_DLY_0_OFFSET                          (0x5C)/* sf3_if_io_dly_0 */
++#define SF_CTRL_SF3_IF_IO_DLY_1_OFFSET                          (0x60)/* sf3_if_io_dly_1 */
++#define SF_CTRL_SF3_IF_IO_DLY_2_OFFSET                          (0x64)/* sf3_if_io_dly_2 */
++#define SF_CTRL_SF3_IF_IO_DLY_3_OFFSET                          (0x68)/* sf3_if_io_dly_3 */
++#define SF_CTRL_SF3_IF_IO_DLY_4_OFFSET                          (0x6C)/* sf3_if_io_dly_4 */
++#define SF_CTRL_2_OFFSET                                        (0x70)/* sf_ctrl_2 */
++#define SF_CTRL_3_OFFSET                                        (0x74)/* sf_ctrl_3 */
++#define SF_CTRL_SF_IF_IAHB_3_OFFSET                             (0x78)/* sf_if_iahb_3 */
++#define SF_CTRL_SF_IF_IAHB_4_OFFSET                             (0x7C)/* sf_if_iahb_4 */
++#define SF_CTRL_SF_IF_IAHB_5_OFFSET                             (0x80)/* sf_if_iahb_5 */
++#define SF_CTRL_SF_IF_IAHB_6_OFFSET                             (0x84)/* sf_if_iahb_6 */
++#define SF_CTRL_SF_IF_IAHB_7_OFFSET                             (0x88)/* sf_if_iahb_7 */
++#define SF_CTRL_SF_IF_IAHB_8_OFFSET                             (0x8C)/* sf_if_iahb_8 */
++#define SF_CTRL_SF_IF_IAHB_9_OFFSET                             (0x90)/* sf_if_iahb_9 */
++#define SF_CTRL_SF_IF_IAHB_10_OFFSET                            (0x94)/* sf_if_iahb_10 */
++#define SF_CTRL_SF_IF_IAHB_11_OFFSET                            (0x98)/* sf_if_iahb_11 */
++#define SF_CTRL_SF_IF_IAHB_12_OFFSET                            (0x9C)/* sf_if_iahb_12 */
++#define SF_CTRL_SF_ID0_OFFSET_OFFSET                            (0xA0)/* sf_id0_offset */
++#define SF_CTRL_SF_ID1_OFFSET_OFFSET                            (0xA4)/* sf_id1_offset */
++#define SF_CTRL_SF_BK2_ID0_OFFSET_OFFSET                        (0xA8)/* sf_bk2_id0_offset */
++#define SF_CTRL_SF_BK2_ID1_OFFSET_OFFSET                        (0xAC)/* sf_bk2_id1_offset */
++#define SF_CTRL_SF_DBG_OFFSET                                   (0xB0)/* sf_dbg */
++#define SF_CTRL_SF_IF2_CTRL_0_OFFSET                            (0xC0)/* sf_if2_ctrl_0 */
++#define SF_CTRL_SF_IF2_CTRL_1_OFFSET                            (0xC4)/* sf_if2_ctrl_1 */
++#define SF_CTRL_SF_IF2_SAHB_0_OFFSET                            (0xC8)/* sf_if2_sahb_0 */
++#define SF_CTRL_SF_IF2_SAHB_1_OFFSET                            (0xCC)/* sf_if2_sahb_1 */
++#define SF_CTRL_SF_IF2_SAHB_2_OFFSET                            (0xD0)/* sf_if2_sahb_2 */
++#define SF_CTRL_PROT_EN_RD_OFFSET                               (0x100)/* sf_ctrl_prot_en_rd */
++#define SF_CTRL_PROT_EN_OFFSET                                  (0x104)/* sf_ctrl_prot_en */
++#define SF_CTRL_SF_AES_KEY_R0_0_OFFSET                          (0x200)/* sf_aes_key_r0_0 */
++#define SF_CTRL_SF_AES_KEY_R0_1_OFFSET                          (0x204)/* sf_aes_key_r0_1 */
++#define SF_CTRL_SF_AES_KEY_R0_2_OFFSET                          (0x208)/* sf_aes_key_r0_2 */
++#define SF_CTRL_SF_AES_KEY_R0_3_OFFSET                          (0x20C)/* sf_aes_key_r0_3 */
++#define SF_CTRL_SF_AES_KEY_R0_4_OFFSET                          (0x210)/* sf_aes_key_r0_4 */
++#define SF_CTRL_SF_AES_KEY_R0_5_OFFSET                          (0x214)/* sf_aes_key_r0_5 */
++#define SF_CTRL_SF_AES_KEY_R0_6_OFFSET                          (0x218)/* sf_aes_key_r0_6 */
++#define SF_CTRL_SF_AES_KEY_R0_7_OFFSET                          (0x21C)/* sf_aes_key_r0_7 */
++#define SF_CTRL_SF_AES_IV_R0_W0_OFFSET                          (0x220)/* sf_aes_iv_r0_w0 */
++#define SF_CTRL_SF_AES_IV_R0_W1_OFFSET                          (0x224)/* sf_aes_iv_r0_w1 */
++#define SF_CTRL_SF_AES_IV_R0_W2_OFFSET                          (0x228)/* sf_aes_iv_r0_w2 */
++#define SF_CTRL_SF_AES_IV_R0_W3_OFFSET                          (0x22C)/* sf_aes_iv_r0_w3 */
++#define SF_CTRL_SF_AES_R0_START_OFFSET                          (0x230)/* sf_aes_r0_start */
++#define SF_CTRL_SF_AES_R0_END_OFFSET                            (0x234)/* sf_aes_r0_end */
++#define SF_CTRL_SF_AES_KEY_R1_0_OFFSET                          (0x280)/* sf_aes_key_r1_0 */
++#define SF_CTRL_SF_AES_KEY_R1_1_OFFSET                          (0x284)/* sf_aes_key_r1_1 */
++#define SF_CTRL_SF_AES_KEY_R1_2_OFFSET                          (0x288)/* sf_aes_key_r1_2 */
++#define SF_CTRL_SF_AES_KEY_R1_3_OFFSET                          (0x28C)/* sf_aes_key_r1_3 */
++#define SF_CTRL_SF_AES_KEY_R1_4_OFFSET                          (0x290)/* sf_aes_key_r1_4 */
++#define SF_CTRL_SF_AES_KEY_R1_5_OFFSET                          (0x294)/* sf_aes_key_r1_5 */
++#define SF_CTRL_SF_AES_KEY_R1_6_OFFSET                          (0x298)/* sf_aes_key_r1_6 */
++#define SF_CTRL_SF_AES_KEY_R1_7_OFFSET                          (0x29C)/* sf_aes_key_r1_7 */
++#define SF_CTRL_SF_AES_IV_R1_W0_OFFSET                          (0x2A0)/* sf_aes_iv_r1_w0 */
++#define SF_CTRL_SF_AES_IV_R1_W1_OFFSET                          (0x2A4)/* sf_aes_iv_r1_w1 */
++#define SF_CTRL_SF_AES_IV_R1_W2_OFFSET                          (0x2A8)/* sf_aes_iv_r1_w2 */
++#define SF_CTRL_SF_AES_IV_R1_W3_OFFSET                          (0x2AC)/* sf_aes_iv_r1_w3 */
++#define SF_CTRL_SF_AES_R1_START_OFFSET                          (0x2B0)/* sf_aes_r1_start */
++#define SF_CTRL_SF_AES_R1_END_OFFSET                            (0x2B4)/* sf_aes_r1_end */
++#define SF_CTRL_SF_AES_KEY_R2_0_OFFSET                          (0x300)/* sf_aes_key_r2_0 */
++#define SF_CTRL_SF_AES_KEY_R2_1_OFFSET                          (0x304)/* sf_aes_key_r2_1 */
++#define SF_CTRL_SF_AES_KEY_R2_2_OFFSET                          (0x308)/* sf_aes_key_r2_2 */
++#define SF_CTRL_SF_AES_KEY_R2_3_OFFSET                          (0x30C)/* sf_aes_key_r2_3 */
++#define SF_CTRL_SF_AES_KEY_R2_4_OFFSET                          (0x310)/* sf_aes_key_r2_4 */
++#define SF_CTRL_SF_AES_KEY_R2_5_OFFSET                          (0x314)/* sf_aes_key_r2_5 */
++#define SF_CTRL_SF_AES_KEY_R2_6_OFFSET                          (0x318)/* sf_aes_key_r2_6 */
++#define SF_CTRL_SF_AES_KEY_R2_7_OFFSET                          (0x31C)/* sf_aes_key_r2_7 */
++#define SF_CTRL_SF_AES_IV_R2_W0_OFFSET                          (0x320)/* sf_aes_iv_r2_w0 */
++#define SF_CTRL_SF_AES_IV_R2_W1_OFFSET                          (0x324)/* sf_aes_iv_r2_w1 */
++#define SF_CTRL_SF_AES_IV_R2_W2_OFFSET                          (0x328)/* sf_aes_iv_r2_w2 */
++#define SF_CTRL_SF_AES_IV_R2_W3_OFFSET                          (0x32C)/* sf_aes_iv_r2_w3 */
++#define SF_CTRL_SF_AES_R2_START_OFFSET                          (0x330)/* sf_aes_r2_start */
++#define SF_CTRL_SF_AES_R2_END_OFFSET                            (0x334)/* sf_aes_r2_end */
++
++/* 0x0 : sf_ctrl_0 */
++#define SF_CTRL_SF_CLK_SF_RX_INV_SEL                            (1<<2U)
++#define SF_CTRL_SF_CLK_OUT_GATE_EN                              (1<<3U)
++#define SF_CTRL_SF_CLK_OUT_INV_SEL                              (1<<4U)
++#define SF_CTRL_SF_IF_READ_DLY_N_SHIFT                          (8U)
++#define SF_CTRL_SF_IF_READ_DLY_N_MASK                           (0x7<<SF_CTRL_SF_IF_READ_DLY_N_SHIFT)
++#define SF_CTRL_SF_IF_READ_DLY_EN                               (1<<11U)
++#define SF_CTRL_SF_IF_INT                                       (1<<16U)
++#define SF_CTRL_SF_IF_INT_CLR                                   (1<<17U)
++#define SF_CTRL_SF_IF_INT_SET                                   (1<<18U)
++#define SF_CTRL_SF_IF_32B_ADR_EN                                (1<<19U)
++#define SF_CTRL_SF_AES_DOUT_ENDIAN                              (1<<20U)
++#define SF_CTRL_SF_AES_DIN_ENDIAN                               (1<<21U)
++#define SF_CTRL_SF_AES_KEY_ENDIAN                               (1<<22U)
++#define SF_CTRL_SF_AES_IV_ENDIAN                                (1<<23U)
++#define SF_CTRL_SF_ID_SHIFT                                     (24U)
++#define SF_CTRL_SF_ID_MASK                                      (0xff<<SF_CTRL_SF_ID_SHIFT)
++
++/* 0x4 : sf_ctrl_1 */
++#define SF_CTRL_SF_IF_SR_PAT_MASK_SHIFT                         (0U)
++#define SF_CTRL_SF_IF_SR_PAT_MASK_MASK                          (0xff<<SF_CTRL_SF_IF_SR_PAT_MASK_SHIFT)
++#define SF_CTRL_SF_IF_SR_PAT_SHIFT                              (8U)
++#define SF_CTRL_SF_IF_SR_PAT_MASK                               (0xff<<SF_CTRL_SF_IF_SR_PAT_SHIFT)
++#define SF_CTRL_SF_IF_SR_INT                                    (1<<16U)
++#define SF_CTRL_SF_IF_SR_INT_EN                                 (1<<17U)
++#define SF_CTRL_SF_IF_SR_INT_SET                                (1<<18U)
++#define SF_CTRL_SF_IF_0_ACK_LAT_SHIFT                           (20U)
++#define SF_CTRL_SF_IF_0_ACK_LAT_MASK                            (0x7<<SF_CTRL_SF_IF_0_ACK_LAT_SHIFT)
++#define SF_CTRL_SF_AHB2SIF_DISWRAP                              (1<<23U)
++#define SF_CTRL_SF_IF_REG_HOLD                                  (1<<24U)
++#define SF_CTRL_SF_IF_REG_WP                                    (1<<25U)
++#define SF_CTRL_SF_AHB2SIF_STOPPED                              (1<<26U)
++#define SF_CTRL_SF_AHB2SIF_STOP                                 (1<<27U)
++#define SF_CTRL_SF_IF_FN_SEL                                    (1<<28U)
++#define SF_CTRL_SF_IF_EN                                        (1<<29U)
++#define SF_CTRL_SF_AHB2SIF_EN                                   (1<<30U)
++#define SF_CTRL_SF_AHB2SRAM_EN                                  (1<<31U)
++
++/* 0x8 : sf_if_sahb_0 */
++#define SF_CTRL_SF_IF_BUSY                                      (1<<0U)
++#define SF_CTRL_SF_IF_0_TRIG                                    (1<<1U)
++#define SF_CTRL_SF_IF_0_DAT_BYTE_SHIFT                          (2U)
++#define SF_CTRL_SF_IF_0_DAT_BYTE_MASK                           (0x3ff<<SF_CTRL_SF_IF_0_DAT_BYTE_SHIFT)
++#define SF_CTRL_SF_IF_0_DMY_BYTE_SHIFT                          (12U)
++#define SF_CTRL_SF_IF_0_DMY_BYTE_MASK                           (0x1f<<SF_CTRL_SF_IF_0_DMY_BYTE_SHIFT)
++#define SF_CTRL_SF_IF_0_ADR_BYTE_SHIFT                          (17U)
++#define SF_CTRL_SF_IF_0_ADR_BYTE_MASK                           (0x7<<SF_CTRL_SF_IF_0_ADR_BYTE_SHIFT)
++#define SF_CTRL_SF_IF_0_CMD_BYTE_SHIFT                          (20U)
++#define SF_CTRL_SF_IF_0_CMD_BYTE_MASK                           (0x7<<SF_CTRL_SF_IF_0_CMD_BYTE_SHIFT)
++#define SF_CTRL_SF_IF_0_DAT_RW                                  (1<<23U)
++#define SF_CTRL_SF_IF_0_DAT_EN                                  (1<<24U)
++#define SF_CTRL_SF_IF_0_DMY_EN                                  (1<<25U)
++#define SF_CTRL_SF_IF_0_ADR_EN                                  (1<<26U)
++#define SF_CTRL_SF_IF_0_CMD_EN                                  (1<<27U)
++#define SF_CTRL_SF_IF_0_SPI_MODE_SHIFT                          (28U)
++#define SF_CTRL_SF_IF_0_SPI_MODE_MASK                           (0x7<<SF_CTRL_SF_IF_0_SPI_MODE_SHIFT)
++#define SF_CTRL_SF_IF_0_QPI_MODE_EN                             (1<<31U)
++
++/* 0xC : sf_if_sahb_1 */
++#define SF_CTRL_SF_IF_0_CMD_BUF_0_SHIFT                         (0U)
++#define SF_CTRL_SF_IF_0_CMD_BUF_0_MASK                          (0xffffffffL<<SF_CTRL_SF_IF_0_CMD_BUF_0_SHIFT)
++
++/* 0x10 : sf_if_sahb_2 */
++#define SF_CTRL_SF_IF_0_CMD_BUF_1_SHIFT                         (0U)
++#define SF_CTRL_SF_IF_0_CMD_BUF_1_MASK                          (0xffffffffL<<SF_CTRL_SF_IF_0_CMD_BUF_1_SHIFT)
++
++/* 0x14 : sf_if_iahb_0 */
++#define SF_CTRL_SF_IF_1_DMY_BYTE_SHIFT                          (12U)
++#define SF_CTRL_SF_IF_1_DMY_BYTE_MASK                           (0x1f<<SF_CTRL_SF_IF_1_DMY_BYTE_SHIFT)
++#define SF_CTRL_SF_IF_1_ADR_BYTE_SHIFT                          (17U)
++#define SF_CTRL_SF_IF_1_ADR_BYTE_MASK                           (0x7<<SF_CTRL_SF_IF_1_ADR_BYTE_SHIFT)
++#define SF_CTRL_SF_IF_1_CMD_BYTE_SHIFT                          (20U)
++#define SF_CTRL_SF_IF_1_CMD_BYTE_MASK                           (0x7<<SF_CTRL_SF_IF_1_CMD_BYTE_SHIFT)
++#define SF_CTRL_SF_IF_1_DAT_RW                                  (1<<23U)
++#define SF_CTRL_SF_IF_1_DAT_EN                                  (1<<24U)
++#define SF_CTRL_SF_IF_1_DMY_EN                                  (1<<25U)
++#define SF_CTRL_SF_IF_1_ADR_EN                                  (1<<26U)
++#define SF_CTRL_SF_IF_1_CMD_EN                                  (1<<27U)
++#define SF_CTRL_SF_IF_1_SPI_MODE_SHIFT                          (28U)
++#define SF_CTRL_SF_IF_1_SPI_MODE_MASK                           (0x7<<SF_CTRL_SF_IF_1_SPI_MODE_SHIFT)
++#define SF_CTRL_SF_IF_1_QPI_MODE_EN                             (1<<31U)
++
++/* 0x18 : sf_if_iahb_1 */
++#define SF_CTRL_SF_IF_1_CMD_BUF_0_SHIFT                         (0U)
++#define SF_CTRL_SF_IF_1_CMD_BUF_0_MASK                          (0xffffffffL<<SF_CTRL_SF_IF_1_CMD_BUF_0_SHIFT)
++
++/* 0x1C : sf_if_iahb_2 */
++#define SF_CTRL_SF_IF_1_CMD_BUF_1_SHIFT                         (0U)
++#define SF_CTRL_SF_IF_1_CMD_BUF_1_MASK                          (0xffffffffL<<SF_CTRL_SF_IF_1_CMD_BUF_1_SHIFT)
++
++/* 0x20 : sf_if_status_0 */
++#define SF_CTRL_SF_IF_STATUS_0_SHIFT                            (0U)
++#define SF_CTRL_SF_IF_STATUS_0_MASK                             (0xffffffffL<<SF_CTRL_SF_IF_STATUS_0_SHIFT)
++
++/* 0x24 : sf_if_status_1 */
++#define SF_CTRL_SF_IF_STATUS_1_SHIFT                            (0U)
++#define SF_CTRL_SF_IF_STATUS_1_MASK                             (0xffffffffL<<SF_CTRL_SF_IF_STATUS_1_SHIFT)
++
++/* 0x28 : sf_aes */
++#define SF_CTRL_SF_AES_EN                                       (1<<0U)
++#define SF_CTRL_SF_AES_MODE_SHIFT                               (1U)
++#define SF_CTRL_SF_AES_MODE_MASK                                (0x3<<SF_CTRL_SF_AES_MODE_SHIFT)
++#define SF_CTRL_SF_AES_BLK_MODE                                 (1<<3U)
++#define SF_CTRL_SF_AES_XTS_KEY_OPT                              (1<<4U)
++#define SF_CTRL_SF_AES_STATUS_SHIFT                             (5U)
++#define SF_CTRL_SF_AES_STATUS_MASK                              (0x7ffffff<<SF_CTRL_SF_AES_STATUS_SHIFT)
++
++/* 0x2C : sf_ahb2sif_status */
++#define SF_CTRL_SF_AHB2SIF_STATUS_SHIFT                         (0U)
++#define SF_CTRL_SF_AHB2SIF_STATUS_MASK                          (0xffffffffL<<SF_CTRL_SF_AHB2SIF_STATUS_SHIFT)
++
++/* 0x30 : sf_if_io_dly_0 */
++#define SF_CTRL_SF_CS_DLY_SEL_SHIFT                             (0U)
++#define SF_CTRL_SF_CS_DLY_SEL_MASK                              (0x3<<SF_CTRL_SF_CS_DLY_SEL_SHIFT)
++#define SF_CTRL_SF_CS2_DLY_SEL_SHIFT                            (2U)
++#define SF_CTRL_SF_CS2_DLY_SEL_MASK                             (0x3<<SF_CTRL_SF_CS2_DLY_SEL_SHIFT)
++#define SF_CTRL_SF_CLK_OUT_DLY_SEL_SHIFT                        (8U)
++#define SF_CTRL_SF_CLK_OUT_DLY_SEL_MASK                         (0x3<<SF_CTRL_SF_CLK_OUT_DLY_SEL_SHIFT)
++#define SF_CTRL_SF_DQS_OE_DLY_SEL_SHIFT                         (26U)
++#define SF_CTRL_SF_DQS_OE_DLY_SEL_MASK                          (0x3<<SF_CTRL_SF_DQS_OE_DLY_SEL_SHIFT)
++#define SF_CTRL_SF_DQS_DI_DLY_SEL_SHIFT                         (28U)
++#define SF_CTRL_SF_DQS_DI_DLY_SEL_MASK                          (0x3<<SF_CTRL_SF_DQS_DI_DLY_SEL_SHIFT)
++#define SF_CTRL_SF_DQS_DO_DLY_SEL_SHIFT                         (30U)
++#define SF_CTRL_SF_DQS_DO_DLY_SEL_MASK                          (0x3<<SF_CTRL_SF_DQS_DO_DLY_SEL_SHIFT)
++
++/* 0x34 : sf_if_io_dly_1 */
++#define SF_CTRL_SF_IO_0_OE_DLY_SEL_SHIFT                        (0U)
++#define SF_CTRL_SF_IO_0_OE_DLY_SEL_MASK                         (0x3<<SF_CTRL_SF_IO_0_OE_DLY_SEL_SHIFT)
++#define SF_CTRL_SF_IO_0_DI_DLY_SEL_SHIFT                        (8U)
++#define SF_CTRL_SF_IO_0_DI_DLY_SEL_MASK                         (0x3<<SF_CTRL_SF_IO_0_DI_DLY_SEL_SHIFT)
++#define SF_CTRL_SF_IO_0_DO_DLY_SEL_SHIFT                        (16U)
++#define SF_CTRL_SF_IO_0_DO_DLY_SEL_MASK                         (0x3<<SF_CTRL_SF_IO_0_DO_DLY_SEL_SHIFT)
++
++/* 0x38 : sf_if_io_dly_2 */
++#define SF_CTRL_SF_IO_1_OE_DLY_SEL_SHIFT                        (0U)
++#define SF_CTRL_SF_IO_1_OE_DLY_SEL_MASK                         (0x3<<SF_CTRL_SF_IO_1_OE_DLY_SEL_SHIFT)
++#define SF_CTRL_SF_IO_1_DI_DLY_SEL_SHIFT                        (8U)
++#define SF_CTRL_SF_IO_1_DI_DLY_SEL_MASK                         (0x3<<SF_CTRL_SF_IO_1_DI_DLY_SEL_SHIFT)
++#define SF_CTRL_SF_IO_1_DO_DLY_SEL_SHIFT                        (16U)
++#define SF_CTRL_SF_IO_1_DO_DLY_SEL_MASK                         (0x3<<SF_CTRL_SF_IO_1_DO_DLY_SEL_SHIFT)
++
++/* 0x3C : sf_if_io_dly_3 */
++#define SF_CTRL_SF_IO_2_OE_DLY_SEL_SHIFT                        (0U)
++#define SF_CTRL_SF_IO_2_OE_DLY_SEL_MASK                         (0x3<<SF_CTRL_SF_IO_2_OE_DLY_SEL_SHIFT)
++#define SF_CTRL_SF_IO_2_DI_DLY_SEL_SHIFT                        (8U)
++#define SF_CTRL_SF_IO_2_DI_DLY_SEL_MASK                         (0x3<<SF_CTRL_SF_IO_2_DI_DLY_SEL_SHIFT)
++#define SF_CTRL_SF_IO_2_DO_DLY_SEL_SHIFT                        (16U)
++#define SF_CTRL_SF_IO_2_DO_DLY_SEL_MASK                         (0x3<<SF_CTRL_SF_IO_2_DO_DLY_SEL_SHIFT)
++
++/* 0x40 : sf_if_io_dly_4 */
++#define SF_CTRL_SF_IO_3_OE_DLY_SEL_SHIFT                        (0U)
++#define SF_CTRL_SF_IO_3_OE_DLY_SEL_MASK                         (0x3<<SF_CTRL_SF_IO_3_OE_DLY_SEL_SHIFT)
++#define SF_CTRL_SF_IO_3_DI_DLY_SEL_SHIFT                        (8U)
++#define SF_CTRL_SF_IO_3_DI_DLY_SEL_MASK                         (0x3<<SF_CTRL_SF_IO_3_DI_DLY_SEL_SHIFT)
++#define SF_CTRL_SF_IO_3_DO_DLY_SEL_SHIFT                        (16U)
++#define SF_CTRL_SF_IO_3_DO_DLY_SEL_MASK                         (0x3<<SF_CTRL_SF_IO_3_DO_DLY_SEL_SHIFT)
++
++/* 0x44 : sf_reserved */
++#define SF_CTRL_SF_RESERVED_SHIFT                               (0U)
++#define SF_CTRL_SF_RESERVED_MASK                                (0xffffffffL<<SF_CTRL_SF_RESERVED_SHIFT)
++
++/* 0x48 : sf2_if_io_dly_0 */
++#define SF_CTRL_SF2_CS_DLY_SEL_SHIFT                            (0U)
++#define SF_CTRL_SF2_CS_DLY_SEL_MASK                             (0x3<<SF_CTRL_SF2_CS_DLY_SEL_SHIFT)
++#define SF_CTRL_SF2_CS2_DLY_SEL_SHIFT                           (2U)
++#define SF_CTRL_SF2_CS2_DLY_SEL_MASK                            (0x3<<SF_CTRL_SF2_CS2_DLY_SEL_SHIFT)
++#define SF_CTRL_SF2_CLK_OUT_DLY_SEL_SHIFT                       (8U)
++#define SF_CTRL_SF2_CLK_OUT_DLY_SEL_MASK                        (0x3<<SF_CTRL_SF2_CLK_OUT_DLY_SEL_SHIFT)
++#define SF_CTRL_SF2_DQS_OE_DLY_SEL_SHIFT                        (26U)
++#define SF_CTRL_SF2_DQS_OE_DLY_SEL_MASK                         (0x3<<SF_CTRL_SF2_DQS_OE_DLY_SEL_SHIFT)
++#define SF_CTRL_SF2_DQS_DI_DLY_SEL_SHIFT                        (28U)
++#define SF_CTRL_SF2_DQS_DI_DLY_SEL_MASK                         (0x3<<SF_CTRL_SF2_DQS_DI_DLY_SEL_SHIFT)
++#define SF_CTRL_SF2_DQS_DO_DLY_SEL_SHIFT                        (30U)
++#define SF_CTRL_SF2_DQS_DO_DLY_SEL_MASK                         (0x3<<SF_CTRL_SF2_DQS_DO_DLY_SEL_SHIFT)
++
++/* 0x4C : sf2_if_io_dly_1 */
++#define SF_CTRL_SF2_IO_0_OE_DLY_SEL_SHIFT                       (0U)
++#define SF_CTRL_SF2_IO_0_OE_DLY_SEL_MASK                        (0x3<<SF_CTRL_SF2_IO_0_OE_DLY_SEL_SHIFT)
++#define SF_CTRL_SF2_IO_0_DI_DLY_SEL_SHIFT                       (8U)
++#define SF_CTRL_SF2_IO_0_DI_DLY_SEL_MASK                        (0x3<<SF_CTRL_SF2_IO_0_DI_DLY_SEL_SHIFT)
++#define SF_CTRL_SF2_IO_0_DO_DLY_SEL_SHIFT                       (16U)
++#define SF_CTRL_SF2_IO_0_DO_DLY_SEL_MASK                        (0x3<<SF_CTRL_SF2_IO_0_DO_DLY_SEL_SHIFT)
++
++/* 0x50 : sf2_if_io_dly_2 */
++#define SF_CTRL_SF2_IO_1_OE_DLY_SEL_SHIFT                       (0U)
++#define SF_CTRL_SF2_IO_1_OE_DLY_SEL_MASK                        (0x3<<SF_CTRL_SF2_IO_1_OE_DLY_SEL_SHIFT)
++#define SF_CTRL_SF2_IO_1_DI_DLY_SEL_SHIFT                       (8U)
++#define SF_CTRL_SF2_IO_1_DI_DLY_SEL_MASK                        (0x3<<SF_CTRL_SF2_IO_1_DI_DLY_SEL_SHIFT)
++#define SF_CTRL_SF2_IO_1_DO_DLY_SEL_SHIFT                       (16U)
++#define SF_CTRL_SF2_IO_1_DO_DLY_SEL_MASK                        (0x3<<SF_CTRL_SF2_IO_1_DO_DLY_SEL_SHIFT)
++
++/* 0x54 : sf2_if_io_dly_3 */
++#define SF_CTRL_SF2_IO_2_OE_DLY_SEL_SHIFT                       (0U)
++#define SF_CTRL_SF2_IO_2_OE_DLY_SEL_MASK                        (0x3<<SF_CTRL_SF2_IO_2_OE_DLY_SEL_SHIFT)
++#define SF_CTRL_SF2_IO_2_DI_DLY_SEL_SHIFT                       (8U)
++#define SF_CTRL_SF2_IO_2_DI_DLY_SEL_MASK                        (0x3<<SF_CTRL_SF2_IO_2_DI_DLY_SEL_SHIFT)
++#define SF_CTRL_SF2_IO_2_DO_DLY_SEL_SHIFT                       (16U)
++#define SF_CTRL_SF2_IO_2_DO_DLY_SEL_MASK                        (0x3<<SF_CTRL_SF2_IO_2_DO_DLY_SEL_SHIFT)
++
++/* 0x58 : sf2_if_io_dly_4 */
++#define SF_CTRL_SF2_IO_3_OE_DLY_SEL_SHIFT                       (0U)
++#define SF_CTRL_SF2_IO_3_OE_DLY_SEL_MASK                        (0x3<<SF_CTRL_SF2_IO_3_OE_DLY_SEL_SHIFT)
++#define SF_CTRL_SF2_IO_3_DI_DLY_SEL_SHIFT                       (8U)
++#define SF_CTRL_SF2_IO_3_DI_DLY_SEL_MASK                        (0x3<<SF_CTRL_SF2_IO_3_DI_DLY_SEL_SHIFT)
++#define SF_CTRL_SF2_IO_3_DO_DLY_SEL_SHIFT                       (16U)
++#define SF_CTRL_SF2_IO_3_DO_DLY_SEL_MASK                        (0x3<<SF_CTRL_SF2_IO_3_DO_DLY_SEL_SHIFT)
++
++/* 0x5C : sf3_if_io_dly_0 */
++#define SF_CTRL_SF3_CS_DLY_SEL_SHIFT                            (0U)
++#define SF_CTRL_SF3_CS_DLY_SEL_MASK                             (0x3<<SF_CTRL_SF3_CS_DLY_SEL_SHIFT)
++#define SF_CTRL_SF3_CS2_DLY_SEL_SHIFT                           (2U)
++#define SF_CTRL_SF3_CS2_DLY_SEL_MASK                            (0x3<<SF_CTRL_SF3_CS2_DLY_SEL_SHIFT)
++#define SF_CTRL_SF3_CLK_OUT_DLY_SEL_SHIFT                       (8U)
++#define SF_CTRL_SF3_CLK_OUT_DLY_SEL_MASK                        (0x3<<SF_CTRL_SF3_CLK_OUT_DLY_SEL_SHIFT)
++#define SF_CTRL_SF3_DQS_OE_DLY_SEL_SHIFT                        (26U)
++#define SF_CTRL_SF3_DQS_OE_DLY_SEL_MASK                         (0x3<<SF_CTRL_SF3_DQS_OE_DLY_SEL_SHIFT)
++#define SF_CTRL_SF3_DQS_DI_DLY_SEL_SHIFT                        (28U)
++#define SF_CTRL_SF3_DQS_DI_DLY_SEL_MASK                         (0x3<<SF_CTRL_SF3_DQS_DI_DLY_SEL_SHIFT)
++#define SF_CTRL_SF3_DQS_DO_DLY_SEL_SHIFT                        (30U)
++#define SF_CTRL_SF3_DQS_DO_DLY_SEL_MASK                         (0x3<<SF_CTRL_SF3_DQS_DO_DLY_SEL_SHIFT)
++
++/* 0x60 : sf3_if_io_dly_1 */
++#define SF_CTRL_SF3_IO_0_OE_DLY_SEL_SHIFT                       (0U)
++#define SF_CTRL_SF3_IO_0_OE_DLY_SEL_MASK                        (0x3<<SF_CTRL_SF3_IO_0_OE_DLY_SEL_SHIFT)
++#define SF_CTRL_SF3_IO_0_DI_DLY_SEL_SHIFT                       (8U)
++#define SF_CTRL_SF3_IO_0_DI_DLY_SEL_MASK                        (0x3<<SF_CTRL_SF3_IO_0_DI_DLY_SEL_SHIFT)
++#define SF_CTRL_SF3_IO_0_DO_DLY_SEL_SHIFT                       (16U)
++#define SF_CTRL_SF3_IO_0_DO_DLY_SEL_MASK                        (0x3<<SF_CTRL_SF3_IO_0_DO_DLY_SEL_SHIFT)
++
++/* 0x64 : sf3_if_io_dly_2 */
++#define SF_CTRL_SF3_IO_1_OE_DLY_SEL_SHIFT                       (0U)
++#define SF_CTRL_SF3_IO_1_OE_DLY_SEL_MASK                        (0x3<<SF_CTRL_SF3_IO_1_OE_DLY_SEL_SHIFT)
++#define SF_CTRL_SF3_IO_1_DI_DLY_SEL_SHIFT                       (8U)
++#define SF_CTRL_SF3_IO_1_DI_DLY_SEL_MASK                        (0x3<<SF_CTRL_SF3_IO_1_DI_DLY_SEL_SHIFT)
++#define SF_CTRL_SF3_IO_1_DO_DLY_SEL_SHIFT                       (16U)
++#define SF_CTRL_SF3_IO_1_DO_DLY_SEL_MASK                        (0x3<<SF_CTRL_SF3_IO_1_DO_DLY_SEL_SHIFT)
++
++/* 0x68 : sf3_if_io_dly_3 */
++#define SF_CTRL_SF3_IO_2_OE_DLY_SEL_SHIFT                       (0U)
++#define SF_CTRL_SF3_IO_2_OE_DLY_SEL_MASK                        (0x3<<SF_CTRL_SF3_IO_2_OE_DLY_SEL_SHIFT)
++#define SF_CTRL_SF3_IO_2_DI_DLY_SEL_SHIFT                       (8U)
++#define SF_CTRL_SF3_IO_2_DI_DLY_SEL_MASK                        (0x3<<SF_CTRL_SF3_IO_2_DI_DLY_SEL_SHIFT)
++#define SF_CTRL_SF3_IO_2_DO_DLY_SEL_SHIFT                       (16U)
++#define SF_CTRL_SF3_IO_2_DO_DLY_SEL_MASK                        (0x3<<SF_CTRL_SF3_IO_2_DO_DLY_SEL_SHIFT)
++
++/* 0x6C : sf3_if_io_dly_4 */
++#define SF_CTRL_SF3_IO_3_OE_DLY_SEL_SHIFT                       (0U)
++#define SF_CTRL_SF3_IO_3_OE_DLY_SEL_MASK                        (0x3<<SF_CTRL_SF3_IO_3_OE_DLY_SEL_SHIFT)
++#define SF_CTRL_SF3_IO_3_DI_DLY_SEL_SHIFT                       (8U)
++#define SF_CTRL_SF3_IO_3_DI_DLY_SEL_MASK                        (0x3<<SF_CTRL_SF3_IO_3_DI_DLY_SEL_SHIFT)
++#define SF_CTRL_SF3_IO_3_DO_DLY_SEL_SHIFT                       (16U)
++#define SF_CTRL_SF3_IO_3_DO_DLY_SEL_MASK                        (0x3<<SF_CTRL_SF3_IO_3_DO_DLY_SEL_SHIFT)
++
++/* 0x70 : sf_ctrl_2 */
++#define SF_CTRL_SF_IF_PAD_SEL_SHIFT                             (0U)
++#define SF_CTRL_SF_IF_PAD_SEL_MASK                              (0x3<<SF_CTRL_SF_IF_PAD_SEL_SHIFT)
++#define SF_CTRL_SF_IF_PAD_SEL_LOCK                              (1<<3U)
++#define SF_CTRL_SF_IF_DTR_EN                                    (1<<4U)
++#define SF_CTRL_SF_IF_DQS_EN                                    (1<<5U)
++#define SF_CTRL_SF_IF_TRIG_WR_PROT                              (1<<6U)
++#define SF_CTRL_SF_ID_OFFSET_LOCK                               (1<<7U)
++#define SF_CTRL_SF_AHB2SIF_REMAP_LOCK                           (1<<25U)
++#define SF_CTRL_SF_AHB2SIF_REMAP_SHIFT                          (26U)
++#define SF_CTRL_SF_AHB2SIF_REMAP_MASK                           (0x3<<SF_CTRL_SF_AHB2SIF_REMAP_SHIFT)
++#define SF_CTRL_SF_IF_BK_SWAP                                   (1<<28U)
++#define SF_CTRL_SF_IF_BK2_MODE                                  (1<<29U)
++#define SF_CTRL_SF_IF_BK2_EN                                    (1<<30U)
++#define SF_CTRL_SF_IF_0_BK_SEL                                  (1<<31U)
++
++/* 0x74 : sf_ctrl_3 */
++#define SF_CTRL_SF_CMDS_2_WRAP_LEN_SHIFT                        (0U)
++#define SF_CTRL_SF_CMDS_2_WRAP_LEN_MASK                         (0xf<<SF_CTRL_SF_CMDS_2_WRAP_LEN_SHIFT)
++#define SF_CTRL_SF_CMDS_2_EN                                    (1<<4U)
++#define SF_CTRL_SF_CMDS_2_BT_DLY_SHIFT                          (5U)
++#define SF_CTRL_SF_CMDS_2_BT_DLY_MASK                           (0x7<<SF_CTRL_SF_CMDS_2_BT_DLY_SHIFT)
++#define SF_CTRL_SF_CMDS_2_BT_EN                                 (1<<8U)
++#define SF_CTRL_SF_CMDS_2_WRAP_Q_INI                            (1<<9U)
++#define SF_CTRL_SF_CMDS_2_WRAP_MODE_SHIFT                       (10U)
++#define SF_CTRL_SF_CMDS_2_WRAP_MODE_MASK                        (0x3<<SF_CTRL_SF_CMDS_2_WRAP_MODE_SHIFT)
++#define SF_CTRL_SF_CMDS_2_WRAP_Q                                (1<<12U)
++#define SF_CTRL_SF_CMDS_1_WRAP_LEN_SHIFT                        (13U)
++#define SF_CTRL_SF_CMDS_1_WRAP_LEN_MASK                         (0xf<<SF_CTRL_SF_CMDS_1_WRAP_LEN_SHIFT)
++#define SF_CTRL_SF_CMDS_1_EN                                    (1<<17U)
++#define SF_CTRL_SF_CMDS_1_WRAP_MODE_SHIFT                       (18U)
++#define SF_CTRL_SF_CMDS_1_WRAP_MODE_MASK                        (0x3<<SF_CTRL_SF_CMDS_1_WRAP_MODE_SHIFT)
++#define SF_CTRL_SF_CMDS_CORE_EN                                 (1<<20U)
++#define SF_CTRL_SF_IF_1_ACK_LAT_SHIFT                           (29U)
++#define SF_CTRL_SF_IF_1_ACK_LAT_MASK                            (0x7<<SF_CTRL_SF_IF_1_ACK_LAT_SHIFT)
++
++/* 0x78 : sf_if_iahb_3 */
++#define SF_CTRL_SF_IF_2_DMY_BYTE_SHIFT                          (12U)
++#define SF_CTRL_SF_IF_2_DMY_BYTE_MASK                           (0x1f<<SF_CTRL_SF_IF_2_DMY_BYTE_SHIFT)
++#define SF_CTRL_SF_IF_2_ADR_BYTE_SHIFT                          (17U)
++#define SF_CTRL_SF_IF_2_ADR_BYTE_MASK                           (0x7<<SF_CTRL_SF_IF_2_ADR_BYTE_SHIFT)
++#define SF_CTRL_SF_IF_2_CMD_BYTE_SHIFT                          (20U)
++#define SF_CTRL_SF_IF_2_CMD_BYTE_MASK                           (0x7<<SF_CTRL_SF_IF_2_CMD_BYTE_SHIFT)
++#define SF_CTRL_SF_IF_2_DAT_RW                                  (1<<23U)
++#define SF_CTRL_SF_IF_2_DAT_EN                                  (1<<24U)
++#define SF_CTRL_SF_IF_2_DMY_EN                                  (1<<25U)
++#define SF_CTRL_SF_IF_2_ADR_EN                                  (1<<26U)
++#define SF_CTRL_SF_IF_2_CMD_EN                                  (1<<27U)
++#define SF_CTRL_SF_IF_2_SPI_MODE_SHIFT                          (28U)
++#define SF_CTRL_SF_IF_2_SPI_MODE_MASK                           (0x7<<SF_CTRL_SF_IF_2_SPI_MODE_SHIFT)
++#define SF_CTRL_SF_IF_2_QPI_MODE_EN                             (1<<31U)
++
++/* 0x7C : sf_if_iahb_4 */
++#define SF_CTRL_SF_IF_2_CMD_BUF_0_SHIFT                         (0U)
++#define SF_CTRL_SF_IF_2_CMD_BUF_0_MASK                          (0xffffffffL<<SF_CTRL_SF_IF_2_CMD_BUF_0_SHIFT)
++
++/* 0x80 : sf_if_iahb_5 */
++#define SF_CTRL_SF_IF_2_CMD_BUF_1_SHIFT                         (0U)
++#define SF_CTRL_SF_IF_2_CMD_BUF_1_MASK                          (0xffffffffL<<SF_CTRL_SF_IF_2_CMD_BUF_1_SHIFT)
++
++/* 0x84 : sf_if_iahb_6 */
++#define SF_CTRL_SF_IF_3_ADR_BYTE_SHIFT                          (17U)
++#define SF_CTRL_SF_IF_3_ADR_BYTE_MASK                           (0x7<<SF_CTRL_SF_IF_3_ADR_BYTE_SHIFT)
++#define SF_CTRL_SF_IF_3_CMD_BYTE_SHIFT                          (20U)
++#define SF_CTRL_SF_IF_3_CMD_BYTE_MASK                           (0x7<<SF_CTRL_SF_IF_3_CMD_BYTE_SHIFT)
++#define SF_CTRL_SF_IF_3_ADR_EN                                  (1<<26U)
++#define SF_CTRL_SF_IF_3_CMD_EN                                  (1<<27U)
++#define SF_CTRL_SF_IF_3_SPI_MODE_SHIFT                          (28U)
++#define SF_CTRL_SF_IF_3_SPI_MODE_MASK                           (0x7<<SF_CTRL_SF_IF_3_SPI_MODE_SHIFT)
++#define SF_CTRL_SF_IF_3_QPI_MODE_EN                             (1<<31U)
++
++/* 0x88 : sf_if_iahb_7 */
++#define SF_CTRL_SF_IF_3_CMD_BUF_0_SHIFT                         (0U)
++#define SF_CTRL_SF_IF_3_CMD_BUF_0_MASK                          (0xffffffffL<<SF_CTRL_SF_IF_3_CMD_BUF_0_SHIFT)
++
++/* 0x8C : sf_if_iahb_8 */
++#define SF_CTRL_SF_IF_3_CMD_BUF_1_SHIFT                         (0U)
++#define SF_CTRL_SF_IF_3_CMD_BUF_1_MASK                          (0xffffffffL<<SF_CTRL_SF_IF_3_CMD_BUF_1_SHIFT)
++
++/* 0x90 : sf_if_iahb_9 */
++#define SF_CTRL_SF_IF_4_DMY_BYTE_SHIFT                          (12U)
++#define SF_CTRL_SF_IF_4_DMY_BYTE_MASK                           (0x1f<<SF_CTRL_SF_IF_4_DMY_BYTE_SHIFT)
++#define SF_CTRL_SF_IF_4_ADR_BYTE_SHIFT                          (17U)
++#define SF_CTRL_SF_IF_4_ADR_BYTE_MASK                           (0x7<<SF_CTRL_SF_IF_4_ADR_BYTE_SHIFT)
++#define SF_CTRL_SF_IF_4_CMD_BYTE_SHIFT                          (20U)
++#define SF_CTRL_SF_IF_4_CMD_BYTE_MASK                           (0x7<<SF_CTRL_SF_IF_4_CMD_BYTE_SHIFT)
++#define SF_CTRL_SF_IF_4_DAT_RW                                  (1<<23U)
++#define SF_CTRL_SF_IF_4_DAT_EN                                  (1<<24U)
++#define SF_CTRL_SF_IF_4_DMY_EN                                  (1<<25U)
++#define SF_CTRL_SF_IF_4_ADR_EN                                  (1<<26U)
++#define SF_CTRL_SF_IF_4_CMD_EN                                  (1<<27U)
++#define SF_CTRL_SF_IF_4_SPI_MODE_SHIFT                          (28U)
++#define SF_CTRL_SF_IF_4_SPI_MODE_MASK                           (0x7<<SF_CTRL_SF_IF_4_SPI_MODE_SHIFT)
++#define SF_CTRL_SF_IF_4_QPI_MODE_EN                             (1<<31U)
++
++/* 0x94 : sf_if_iahb_10 */
++#define SF_CTRL_SF_IF_4_CMD_BUF_0_SHIFT                         (0U)
++#define SF_CTRL_SF_IF_4_CMD_BUF_0_MASK                          (0xffffffffL<<SF_CTRL_SF_IF_4_CMD_BUF_0_SHIFT)
++
++/* 0x98 : sf_if_iahb_11 */
++#define SF_CTRL_SF_IF_4_CMD_BUF_1_SHIFT                         (0U)
++#define SF_CTRL_SF_IF_4_CMD_BUF_1_MASK                          (0xffffffffL<<SF_CTRL_SF_IF_4_CMD_BUF_1_SHIFT)
++
++/* 0x9C : sf_if_iahb_12 */
++#define SF_CTRL_SF2_CLK_SF_RX_INV_SEL                           (1<<2U)
++#define SF_CTRL_SF2_CLK_SF_RX_INV_SRC                           (1<<3U)
++#define SF_CTRL_SF2_CLK_OUT_INV_SEL                             (1<<4U)
++#define SF_CTRL_SF3_CLK_OUT_INV_SEL                             (1<<5U)
++#define SF_CTRL_SF2_IF_READ_DLY_N_SHIFT                         (8U)
++#define SF_CTRL_SF2_IF_READ_DLY_N_MASK                          (0x7<<SF_CTRL_SF2_IF_READ_DLY_N_SHIFT)
++#define SF_CTRL_SF2_IF_READ_DLY_EN                              (1<<11U)
++#define SF_CTRL_SF2_IF_READ_DLY_SRC                             (1<<12U)
++
++/* 0xA0 : sf_id0_offset */
++#define SF_CTRL_SF_ID0_OFFSET_SHIFT                             (0U)
++#define SF_CTRL_SF_ID0_OFFSET_MASK                              (0xfffffff<<SF_CTRL_SF_ID0_OFFSET_SHIFT)
++
++/* 0xA4 : sf_id1_offset */
++#define SF_CTRL_SF_ID1_OFFSET_SHIFT                             (0U)
++#define SF_CTRL_SF_ID1_OFFSET_MASK                              (0xfffffff<<SF_CTRL_SF_ID1_OFFSET_SHIFT)
++
++/* 0xA8 : sf_bk2_id0_offset */
++#define SF_CTRL_SF_BK2_ID0_OFFSET_SHIFT                         (0U)
++#define SF_CTRL_SF_BK2_ID0_OFFSET_MASK                          (0xfffffff<<SF_CTRL_SF_BK2_ID0_OFFSET_SHIFT)
++
++/* 0xAC : sf_bk2_id1_offset */
++#define SF_CTRL_SF_BK2_ID1_OFFSET_SHIFT                         (0U)
++#define SF_CTRL_SF_BK2_ID1_OFFSET_MASK                          (0xfffffff<<SF_CTRL_SF_BK2_ID1_OFFSET_SHIFT)
++
++/* 0xB0 : sf_dbg */
++#define SF_CTRL_SF_AUTOLOAD_ST_SHIFT                            (0U)
++#define SF_CTRL_SF_AUTOLOAD_ST_MASK                             (0x1f<<SF_CTRL_SF_AUTOLOAD_ST_SHIFT)
++#define SF_CTRL_SF_AUTOLOAD_ST_DONE                             (1<<5U)
++
++/* 0xC0 : sf_if2_ctrl_0 */
++#define SF_CTRL_SF_CLK_SF_IF2_RX_INV_SEL                        (1<<2U)
++#define SF_CTRL_SF_IF2_READ_DLY_N_SHIFT                         (8U)
++#define SF_CTRL_SF_IF2_READ_DLY_N_MASK                          (0x7<<SF_CTRL_SF_IF2_READ_DLY_N_SHIFT)
++#define SF_CTRL_SF_IF2_READ_DLY_EN                              (1<<11U)
++#define SF_CTRL_SF_IF2_INT                                      (1<<16U)
++#define SF_CTRL_SF_IF2_INT_CLR                                  (1<<17U)
++#define SF_CTRL_SF_IF2_INT_SET                                  (1<<18U)
++#define SF_CTRL_SF_IF2_REPLACE_SF1                              (1<<23U)
++#define SF_CTRL_SF_IF2_REPLACE_SF2                              (1<<24U)
++#define SF_CTRL_SF_IF2_REPLACE_SF3                              (1<<25U)
++#define SF_CTRL_SF_IF2_PAD_SEL_SHIFT                            (26U)
++#define SF_CTRL_SF_IF2_PAD_SEL_MASK                             (0x3<<SF_CTRL_SF_IF2_PAD_SEL_SHIFT)
++#define SF_CTRL_SF_IF2_BK_SWAP                                  (1<<28U)
++#define SF_CTRL_SF_IF2_BK2_MODE                                 (1<<29U)
++#define SF_CTRL_SF_IF2_BK2_EN                                   (1<<30U)
++#define SF_CTRL_SF_IF2_BK_SEL                                   (1<<31U)
++
++/* 0xC4 : sf_if2_ctrl_1 */
++#define SF_CTRL_SF_IF2_SR_PAT_MASK_SHIFT                        (0U)
++#define SF_CTRL_SF_IF2_SR_PAT_MASK_MASK                         (0xff<<SF_CTRL_SF_IF2_SR_PAT_MASK_SHIFT)
++#define SF_CTRL_SF_IF2_SR_PAT_SHIFT                             (8U)
++#define SF_CTRL_SF_IF2_SR_PAT_MASK                              (0xff<<SF_CTRL_SF_IF2_SR_PAT_SHIFT)
++#define SF_CTRL_SF_IF2_SR_INT                                   (1<<16U)
++#define SF_CTRL_SF_IF2_SR_INT_EN                                (1<<17U)
++#define SF_CTRL_SF_IF2_SR_INT_SET                               (1<<18U)
++#define SF_CTRL_SF_IF2_ACK_LAT_SHIFT                            (20U)
++#define SF_CTRL_SF_IF2_ACK_LAT_MASK                             (0x7<<SF_CTRL_SF_IF2_ACK_LAT_SHIFT)
++#define SF_CTRL_SF_IF2_REG_HOLD                                 (1<<24U)
++#define SF_CTRL_SF_IF2_REG_WP                                   (1<<25U)
++#define SF_CTRL_SF_IF2_FN_SEL                                   (1<<28U)
++#define SF_CTRL_SF_IF2_EN                                       (1<<29U)
++
++/* 0xC8 : sf_if2_sahb_0 */
++#define SF_CTRL_SF_IF2_BUSY                                     (1<<0U)
++#define SF_CTRL_SF_IF2_0_TRIG                                   (1<<1U)
++#define SF_CTRL_SF_IF2_0_DAT_BYTE_SHIFT                         (2U)
++#define SF_CTRL_SF_IF2_0_DAT_BYTE_MASK                          (0x3ff<<SF_CTRL_SF_IF2_0_DAT_BYTE_SHIFT)
++#define SF_CTRL_SF_IF2_0_DMY_BYTE_SHIFT                         (12U)
++#define SF_CTRL_SF_IF2_0_DMY_BYTE_MASK                          (0x1f<<SF_CTRL_SF_IF2_0_DMY_BYTE_SHIFT)
++#define SF_CTRL_SF_IF2_0_ADR_BYTE_SHIFT                         (17U)
++#define SF_CTRL_SF_IF2_0_ADR_BYTE_MASK                          (0x7<<SF_CTRL_SF_IF2_0_ADR_BYTE_SHIFT)
++#define SF_CTRL_SF_IF2_0_CMD_BYTE_SHIFT                         (20U)
++#define SF_CTRL_SF_IF2_0_CMD_BYTE_MASK                          (0x7<<SF_CTRL_SF_IF2_0_CMD_BYTE_SHIFT)
++#define SF_CTRL_SF_IF2_0_DAT_RW                                 (1<<23U)
++#define SF_CTRL_SF_IF2_0_DAT_EN                                 (1<<24U)
++#define SF_CTRL_SF_IF2_0_DMY_EN                                 (1<<25U)
++#define SF_CTRL_SF_IF2_0_ADR_EN                                 (1<<26U)
++#define SF_CTRL_SF_IF2_0_CMD_EN                                 (1<<27U)
++#define SF_CTRL_SF_IF2_0_SPI_MODE_SHIFT                         (28U)
++#define SF_CTRL_SF_IF2_0_SPI_MODE_MASK                          (0x7<<SF_CTRL_SF_IF2_0_SPI_MODE_SHIFT)
++#define SF_CTRL_SF_IF2_0_QPI_MODE_EN                            (1<<31U)
++
++/* 0xCC : sf_if2_sahb_1 */
++#define SF_CTRL_SF_IF2_0_CMD_BUF_0_SHIFT                        (0U)
++#define SF_CTRL_SF_IF2_0_CMD_BUF_0_MASK                         (0xffffffffL<<SF_CTRL_SF_IF2_0_CMD_BUF_0_SHIFT)
++
++/* 0xD0 : sf_if2_sahb_2 */
++#define SF_CTRL_SF_IF2_0_CMD_BUF_1_SHIFT                        (0U)
++#define SF_CTRL_SF_IF2_0_CMD_BUF_1_MASK                         (0xffffffffL<<SF_CTRL_SF_IF2_0_CMD_BUF_1_SHIFT)
++
++/* 0x100 : sf_ctrl_prot_en_rd */
++#define SF_CTRL_ID0_EN_RD                                       (1<<1U)
++#define SF_CTRL_ID1_EN_RD                                       (1<<2U)
++#define SF_CTRL_SF_SEC_TZSID_LOCK                               (1<<28U)
++#define SF_CTRL_SF_IF2_0_TRIG_WR_LOCK                           (1<<29U)
++#define SF_CTRL_SF_IF_0_TRIG_WR_LOCK                            (1<<30U)
++#define SF_CTRL_SF_DBG_DIS                                      (1<<31U)
++
++/* 0x104 : sf_ctrl_prot_en */
++#define SF_CTRL_ID0_EN                                          (1<<1U)
++#define SF_CTRL_ID1_EN                                          (1<<2U)
++
++/* 0x200 : sf_aes_key_r0_0 */
++#define SF_CTRL_SF_AES_KEY_R0_0_SHIFT                           (0U)
++#define SF_CTRL_SF_AES_KEY_R0_0_MASK                            (0xffffffffL<<SF_CTRL_SF_AES_KEY_R0_0_SHIFT)
++
++/* 0x204 : sf_aes_key_r0_1 */
++#define SF_CTRL_SF_AES_KEY_R0_1_SHIFT                           (0U)
++#define SF_CTRL_SF_AES_KEY_R0_1_MASK                            (0xffffffffL<<SF_CTRL_SF_AES_KEY_R0_1_SHIFT)
++
++/* 0x208 : sf_aes_key_r0_2 */
++#define SF_CTRL_SF_AES_KEY_R0_2_SHIFT                           (0U)
++#define SF_CTRL_SF_AES_KEY_R0_2_MASK                            (0xffffffffL<<SF_CTRL_SF_AES_KEY_R0_2_SHIFT)
++
++/* 0x20C : sf_aes_key_r0_3 */
++#define SF_CTRL_SF_AES_KEY_R0_3_SHIFT                           (0U)
++#define SF_CTRL_SF_AES_KEY_R0_3_MASK                            (0xffffffffL<<SF_CTRL_SF_AES_KEY_R0_3_SHIFT)
++
++/* 0x210 : sf_aes_key_r0_4 */
++#define SF_CTRL_SF_AES_KEY_R0_4_SHIFT                           (0U)
++#define SF_CTRL_SF_AES_KEY_R0_4_MASK                            (0xffffffffL<<SF_CTRL_SF_AES_KEY_R0_4_SHIFT)
++
++/* 0x214 : sf_aes_key_r0_5 */
++#define SF_CTRL_SF_AES_KEY_R0_5_SHIFT                           (0U)
++#define SF_CTRL_SF_AES_KEY_R0_5_MASK                            (0xffffffffL<<SF_CTRL_SF_AES_KEY_R0_5_SHIFT)
++
++/* 0x218 : sf_aes_key_r0_6 */
++#define SF_CTRL_SF_AES_KEY_R0_6_SHIFT                           (0U)
++#define SF_CTRL_SF_AES_KEY_R0_6_MASK                            (0xffffffffL<<SF_CTRL_SF_AES_KEY_R0_6_SHIFT)
++
++/* 0x21C : sf_aes_key_r0_7 */
++#define SF_CTRL_SF_AES_KEY_R0_7_SHIFT                           (0U)
++#define SF_CTRL_SF_AES_KEY_R0_7_MASK                            (0xffffffffL<<SF_CTRL_SF_AES_KEY_R0_7_SHIFT)
++
++/* 0x220 : sf_aes_iv_r0_w0 */
++#define SF_CTRL_SF_AES_IV_R0_W0_SHIFT                           (0U)
++#define SF_CTRL_SF_AES_IV_R0_W0_MASK                            (0xffffffffL<<SF_CTRL_SF_AES_IV_R0_W0_SHIFT)
++
++/* 0x224 : sf_aes_iv_r0_w1 */
++#define SF_CTRL_SF_AES_IV_R0_W1_SHIFT                           (0U)
++#define SF_CTRL_SF_AES_IV_R0_W1_MASK                            (0xffffffffL<<SF_CTRL_SF_AES_IV_R0_W1_SHIFT)
++
++/* 0x228 : sf_aes_iv_r0_w2 */
++#define SF_CTRL_SF_AES_IV_R0_W2_SHIFT                           (0U)
++#define SF_CTRL_SF_AES_IV_R0_W2_MASK                            (0xffffffffL<<SF_CTRL_SF_AES_IV_R0_W2_SHIFT)
++
++/* 0x22C : sf_aes_iv_r0_w3 */
++#define SF_CTRL_SF_AES_IV_R0_W3_SHIFT                           (0U)
++#define SF_CTRL_SF_AES_IV_R0_W3_MASK                            (0xffffffffL<<SF_CTRL_SF_AES_IV_R0_W3_SHIFT)
++
++/* 0x230 : sf_aes_r0_start */
++#define SF_CTRL_SF_AES_REGION_R0_START_SHIFT                    (0U)
++#define SF_CTRL_SF_AES_REGION_R0_START_MASK                     (0x7ffff<<SF_CTRL_SF_AES_REGION_R0_START_SHIFT)
++#define SF_CTRL_SF_AES_REGION_R0_HW_KEY_EN                      (1<<29U)
++#define SF_CTRL_SF_AES_REGION_R0_EN                             (1<<30U)
++#define SF_CTRL_SF_AES_REGION_R0_LOCK                           (1<<31U)
++
++/* 0x234 : sf_aes_r0_end */
++#define SF_CTRL_SF_AES_REGION_R0_END_SHIFT                      (0U)
++#define SF_CTRL_SF_AES_REGION_R0_END_MASK                       (0x7ffff<<SF_CTRL_SF_AES_REGION_R0_END_SHIFT)
++
++/* 0x280 : sf_aes_key_r1_0 */
++#define SF_CTRL_SF_AES_KEY_R1_0_SHIFT                           (0U)
++#define SF_CTRL_SF_AES_KEY_R1_0_MASK                            (0xffffffffL<<SF_CTRL_SF_AES_KEY_R1_0_SHIFT)
++
++/* 0x284 : sf_aes_key_r1_1 */
++#define SF_CTRL_SF_AES_KEY_R1_1_SHIFT                           (0U)
++#define SF_CTRL_SF_AES_KEY_R1_1_MASK                            (0xffffffffL<<SF_CTRL_SF_AES_KEY_R1_1_SHIFT)
++
++/* 0x288 : sf_aes_key_r1_2 */
++#define SF_CTRL_SF_AES_KEY_R1_2_SHIFT                           (0U)
++#define SF_CTRL_SF_AES_KEY_R1_2_MASK                            (0xffffffffL<<SF_CTRL_SF_AES_KEY_R1_2_SHIFT)
++
++/* 0x28C : sf_aes_key_r1_3 */
++#define SF_CTRL_SF_AES_KEY_R1_3_SHIFT                           (0U)
++#define SF_CTRL_SF_AES_KEY_R1_3_MASK                            (0xffffffffL<<SF_CTRL_SF_AES_KEY_R1_3_SHIFT)
++
++/* 0x290 : sf_aes_key_r1_4 */
++#define SF_CTRL_SF_AES_KEY_R1_4_SHIFT                           (0U)
++#define SF_CTRL_SF_AES_KEY_R1_4_MASK                            (0xffffffffL<<SF_CTRL_SF_AES_KEY_R1_4_SHIFT)
++
++/* 0x294 : sf_aes_key_r1_5 */
++#define SF_CTRL_SF_AES_KEY_R1_5_SHIFT                           (0U)
++#define SF_CTRL_SF_AES_KEY_R1_5_MASK                            (0xffffffffL<<SF_CTRL_SF_AES_KEY_R1_5_SHIFT)
++
++/* 0x298 : sf_aes_key_r1_6 */
++#define SF_CTRL_SF_AES_KEY_R1_6_SHIFT                           (0U)
++#define SF_CTRL_SF_AES_KEY_R1_6_MASK                            (0xffffffffL<<SF_CTRL_SF_AES_KEY_R1_6_SHIFT)
++
++/* 0x29C : sf_aes_key_r1_7 */
++#define SF_CTRL_SF_AES_KEY_R1_7_SHIFT                           (0U)
++#define SF_CTRL_SF_AES_KEY_R1_7_MASK                            (0xffffffffL<<SF_CTRL_SF_AES_KEY_R1_7_SHIFT)
++
++/* 0x2A0 : sf_aes_iv_r1_w0 */
++#define SF_CTRL_SF_AES_IV_R1_W0_SHIFT                           (0U)
++#define SF_CTRL_SF_AES_IV_R1_W0_MASK                            (0xffffffffL<<SF_CTRL_SF_AES_IV_R1_W0_SHIFT)
++
++/* 0x2A4 : sf_aes_iv_r1_w1 */
++#define SF_CTRL_SF_AES_IV_R1_W1_SHIFT                           (0U)
++#define SF_CTRL_SF_AES_IV_R1_W1_MASK                            (0xffffffffL<<SF_CTRL_SF_AES_IV_R1_W1_SHIFT)
++
++/* 0x2A8 : sf_aes_iv_r1_w2 */
++#define SF_CTRL_SF_AES_IV_R1_W2_SHIFT                           (0U)
++#define SF_CTRL_SF_AES_IV_R1_W2_MASK                            (0xffffffffL<<SF_CTRL_SF_AES_IV_R1_W2_SHIFT)
++
++/* 0x2AC : sf_aes_iv_r1_w3 */
++#define SF_CTRL_SF_AES_IV_R1_W3_SHIFT                           (0U)
++#define SF_CTRL_SF_AES_IV_R1_W3_MASK                            (0xffffffffL<<SF_CTRL_SF_AES_IV_R1_W3_SHIFT)
++
++/* 0x2B0 : sf_aes_r1_start */
++#define SF_CTRL_SF_AES_R1_START_SHIFT                           (0U)
++#define SF_CTRL_SF_AES_R1_START_MASK                            (0x7ffff<<SF_CTRL_SF_AES_R1_START_SHIFT)
++#define SF_CTRL_SF_AES_R1_HW_KEY_EN                             (1<<29U)
++#define SF_CTRL_SF_AES_R1_EN                                    (1<<30U)
++#define SF_CTRL_SF_AES_R1_LOCK                                  (1<<31U)
++
++/* 0x2B4 : sf_aes_r1_end */
++#define SF_CTRL_SF_AES_R1_END_SHIFT                             (0U)
++#define SF_CTRL_SF_AES_R1_END_MASK                              (0x7ffff<<SF_CTRL_SF_AES_R1_END_SHIFT)
++
++/* 0x300 : sf_aes_key_r2_0 */
++#define SF_CTRL_SF_AES_KEY_R2_0_SHIFT                           (0U)
++#define SF_CTRL_SF_AES_KEY_R2_0_MASK                            (0xffffffffL<<SF_CTRL_SF_AES_KEY_R2_0_SHIFT)
++
++/* 0x304 : sf_aes_key_r2_1 */
++#define SF_CTRL_SF_AES_KEY_R2_1_SHIFT                           (0U)
++#define SF_CTRL_SF_AES_KEY_R2_1_MASK                            (0xffffffffL<<SF_CTRL_SF_AES_KEY_R2_1_SHIFT)
++
++/* 0x308 : sf_aes_key_r2_2 */
++#define SF_CTRL_SF_AES_KEY_R2_2_SHIFT                           (0U)
++#define SF_CTRL_SF_AES_KEY_R2_2_MASK                            (0xffffffffL<<SF_CTRL_SF_AES_KEY_R2_2_SHIFT)
++
++/* 0x30C : sf_aes_key_r2_3 */
++#define SF_CTRL_SF_AES_KEY_R2_3_SHIFT                           (0U)
++#define SF_CTRL_SF_AES_KEY_R2_3_MASK                            (0xffffffffL<<SF_CTRL_SF_AES_KEY_R2_3_SHIFT)
++
++/* 0x310 : sf_aes_key_r2_4 */
++#define SF_CTRL_SF_AES_KEY_R2_4_SHIFT                           (0U)
++#define SF_CTRL_SF_AES_KEY_R2_4_MASK                            (0xffffffffL<<SF_CTRL_SF_AES_KEY_R2_4_SHIFT)
++
++/* 0x314 : sf_aes_key_r2_5 */
++#define SF_CTRL_SF_AES_KEY_R2_5_SHIFT                           (0U)
++#define SF_CTRL_SF_AES_KEY_R2_5_MASK                            (0xffffffffL<<SF_CTRL_SF_AES_KEY_R2_5_SHIFT)
++
++/* 0x318 : sf_aes_key_r2_6 */
++#define SF_CTRL_SF_AES_KEY_R2_6_SHIFT                           (0U)
++#define SF_CTRL_SF_AES_KEY_R2_6_MASK                            (0xffffffffL<<SF_CTRL_SF_AES_KEY_R2_6_SHIFT)
++
++/* 0x31C : sf_aes_key_r2_7 */
++#define SF_CTRL_SF_AES_KEY_R2_7_SHIFT                           (0U)
++#define SF_CTRL_SF_AES_KEY_R2_7_MASK                            (0xffffffffL<<SF_CTRL_SF_AES_KEY_R2_7_SHIFT)
++
++/* 0x320 : sf_aes_iv_r2_w0 */
++#define SF_CTRL_SF_AES_IV_R2_W0_SHIFT                           (0U)
++#define SF_CTRL_SF_AES_IV_R2_W0_MASK                            (0xffffffffL<<SF_CTRL_SF_AES_IV_R2_W0_SHIFT)
++
++/* 0x324 : sf_aes_iv_r2_w1 */
++#define SF_CTRL_SF_AES_IV_R2_W1_SHIFT                           (0U)
++#define SF_CTRL_SF_AES_IV_R2_W1_MASK                            (0xffffffffL<<SF_CTRL_SF_AES_IV_R2_W1_SHIFT)
++
++/* 0x328 : sf_aes_iv_r2_w2 */
++#define SF_CTRL_SF_AES_IV_R2_W2_SHIFT                           (0U)
++#define SF_CTRL_SF_AES_IV_R2_W2_MASK                            (0xffffffffL<<SF_CTRL_SF_AES_IV_R2_W2_SHIFT)
++
++/* 0x32C : sf_aes_iv_r2_w3 */
++#define SF_CTRL_SF_AES_IV_R2_W3_SHIFT                           (0U)
++#define SF_CTRL_SF_AES_IV_R2_W3_MASK                            (0xffffffffL<<SF_CTRL_SF_AES_IV_R2_W3_SHIFT)
++
++/* 0x330 : sf_aes_r2_start */
++#define SF_CTRL_SF_AES_R2_START_SHIFT                           (0U)
++#define SF_CTRL_SF_AES_R2_START_MASK                            (0x7ffff<<SF_CTRL_SF_AES_R2_START_SHIFT)
++#define SF_CTRL_SF_AES_R2_HW_KEY_EN                             (1<<29U)
++#define SF_CTRL_SF_AES_R2_EN                                    (1<<30U)
++#define SF_CTRL_SF_AES_R2_LOCK                                  (1<<31U)
++
++/* 0x334 : sf_aes_r2_end */
++#define SF_CTRL_SF_AES_R2_END_SHIFT                             (0U)
++#define SF_CTRL_SF_AES_R2_END_MASK                              (0x7ffff<<SF_CTRL_SF_AES_R2_END_SHIFT)
++
++
++#define SF_CTRL_IF_SAHB_0_OFFSET                                (0x0)/* sf_if_sahb_0 */
++#define SF_CTRL_IF_SAHB_1_OFFSET                                (0x4)/* sf_if_sahb_1 */
++#define SF_CTRL_IF_SAHB_2_OFFSET                                (0x8)/* sf_if_sahb_2 */
++
++/* 0x0 : sf_if_sahb_0 */
++#define SF_CTRL_IF_BUSY                                         (1<<0U)
++#define SF_CTRL_IF_0_TRIG                                       (1<<1U)
++#define SF_CTRL_IF_0_DAT_BYTE_SHIFT                             (2U)
++#define SF_CTRL_IF_0_DAT_BYTE_MASK                              (0x3ff<<SF_CTRL_IF_0_DAT_BYTE_SHIFT)
++#define SF_CTRL_IF_0_DMY_BYTE_SHIFT                             (12U)
++#define SF_CTRL_IF_0_DMY_BYTE_MASK                              (0x1f<<SF_CTRL_IF_0_DMY_BYTE_SHIFT)
++#define SF_CTRL_IF_0_ADR_BYTE_SHIFT                             (17U)
++#define SF_CTRL_IF_0_ADR_BYTE_MASK                              (0x7<<SF_CTRL_IF_0_ADR_BYTE_SHIFT)
++#define SF_CTRL_IF_0_CMD_BYTE_SHIFT                             (20U)
++#define SF_CTRL_IF_0_CMD_BYTE_MASK                              (0x7<<SF_CTRL_IF_0_CMD_BYTE_SHIFT)
++#define SF_CTRL_IF_0_DAT_RW                                     (1<<23U)
++#define SF_CTRL_IF_0_DAT_EN                                     (1<<24U)
++#define SF_CTRL_IF_0_DMY_EN                                     (1<<25U)
++#define SF_CTRL_IF_0_ADR_EN                                     (1<<26U)
++#define SF_CTRL_IF_0_CMD_EN                                     (1<<27U)
++#define SF_CTRL_IF_0_SPI_MODE_SHIFT                             (28U)
++#define SF_CTRL_IF_0_SPI_MODE_MASK                              (0x7<<SF_CTRL_IF_0_SPI_MODE_SHIFT)
++#define SF_CTRL_IF_0_QPI_MODE_EN                                (1<<31U)
++
++/* 0x4 : sf_if_sahb_1 */
++#define SF_CTRL_IF_0_CMD_BUF_0_SHIFT                            (0U)
++#define SF_CTRL_IF_0_CMD_BUF_0_MASK                             (0xffffffffL<<SF_CTRL_IF_0_CMD_BUF_0_SHIFT)
++
++/* 0x8 : sf_if_sahb_2 */
++#define SF_CTRL_IF_0_CMD_BUF_1_SHIFT                            (0U)
++#define SF_CTRL_IF_0_CMD_BUF_1_MASK                             (0xffffffffL<<SF_CTRL_IF_0_CMD_BUF_1_SHIFT)
++
++
++#define SF_CTRL_IF1_SAHB_OFFSET     0x8
++#define SF_CTRL_IF2_SAHB_OFFSET     0xC8
++
++/**
++ *  @brief Serial flash pad type definition
++ */
++#define SF_CTRL_PAD1                                    0    /*!< SF Ctrl pad 1 */
++#define SF_CTRL_PAD2                                    1    /*!< SF Ctrl pad 2 */
++#define SF_CTRL_PAD3                                    2    /*!< SF Ctrl pad 3 */
++
++/**
++ *  @brief Serial flash config pin select type definition
++ */
++#define SF_IO_EMB_SWAP_IO0_IO3                          0x0  /*!< SF select embedded flash swap io0 with io3 */
++#define SF_IO_EMB_SWAP_DUAL_IO0_IO3                     0x1  /*!< SF select embedded flash swap dual io0 with io3 */
++#define SF_IO_EMB_SWAP_NONE                             0x2  /*!< SF select embedded flash no swap */
++#define SF_IO_EMB_SWAP_NONE_DUAL_IO0                    0x3  /*!< SF select embedded flash no swap and use dual io0 */
++#define SF_IO_EXT_SF2                                   0x4  /*!< SF select external flash SF2 use gpio34-39 */
++#define SF_IO_EMB_SWAP_IO0_IO3_AND_EXT_SF2              0x14 /*!< SF select embedded flash swap io0 with io3 and external SF2 use gpio34-39 */
++#define SF_IO_EMB_SWAP_DUAL_IO0_IO3_AND_EXT_SF2         0x15 /*!< SF select embedded flash swap dual io0 with io3 and external SF2 use gpio34-39 */
++#define SF_IO_EMB_SWAP_NONE_AND_EXT_SF2                 0x16 /*!< SF select embedded flash no swap and external SF2 use gpio34-39 */
++#define SF_IO_EMB_SWAP_NONE_DUAL_IO0_AND_EXT_SF2        0x17 /*!< SF select embedded flash no swap, use dual io0 and external SF2 use gpio34-39 */
++
++/**
++ *  @brief Serial flash select bank control type definition
++ */
++#if defined(BL702) || defined(BL702L)
++#define SF_CTRL_SEL_FLASH                               0    /*!< SF Ctrl system bus control flash */
++#define SF_CTRL_SEL_PSRAM                               1    /*!< SF Ctrl system bus control psram */
++#else
++#define SF_CTRL_FLASH_BANK0                             0    /*!< SF Ctrl select flash bank0 */
++#define SF_CTRL_FLASH_BANK1                             1    /*!< SF Ctrl select flash bank1 */
++#endif
++
++/**
++ *  @brief Serial flash controller wrap mode type definition
++ */
++#define SF_CTRL_WRAP_MODE_0                             0    /*!< Cmds bypass wrap commands to macro, original mode */
++#define SF_CTRL_WRAP_MODE_1                             1    /*!< Cmds handle wrap commands, original mode */
++#define SF_CTRL_WRAP_MODE_2                             2    /*!< Cmds bypass wrap commands to macro, cmds force wrap16*4 splitted into two wrap8*4 */
++#define SF_CTRL_WRAP_MODE_3                             3    /*!< Cmds handle wrap commands, cmds force wrap16*4 splitted into two wrap8*4 */
++
++/**
++ *  @brief Serail flash controller wrap mode len type definition
++ */
++#define SF_CTRL_WRAP_LEN_8                              0    /*!< SF Ctrl wrap length: 8 */
++#define SF_CTRL_WRAP_LEN_16                             1    /*!< SF Ctrl wrap length: 16 */
++#define SF_CTRL_WRAP_LEN_32                             2    /*!< SF Ctrl wrap length: 32 */
++#define SF_CTRL_WRAP_LEN_64                             3    /*!< SF Ctrl wrap length: 64 */
++#define SF_CTRL_WRAP_LEN_128                            4    /*!< SF Ctrl wrap length: 128 */
++#define SF_CTRL_WRAP_LEN_256                            5    /*!< SF Ctrl wrap length: 256 */
++#define SF_CTRL_WRAP_LEN_512                            6    /*!< SF Ctrl wrap length: 512 */
++#define SF_CTRL_WRAP_LEN_1024                           7    /*!< SF Ctrl wrap length: 1024 */
++#define SF_CTRL_WRAP_LEN_2048                           8    /*!< SF Ctrl wrap length: 2048 */
++#define SF_CTRL_WRAP_LEN_4096                           9    /*!< SF Ctrl wrap length: 4096 */
++
++/**
++ *  @brief Serail flash controller memory remap type define
++ */
++#define SF_CTRL_ORIGINAL_MEMORY_MAP                     0    /*!< Remap none, use two addr map when use dual flash */
++#define SF_CTRL_REMAP_16MB                              1    /*!< Remap HADDR>16MB region to psram port HADDR[24] -> HADDR[28] */
++#define SF_CTRL_REMAP_8MB                               2    /*!< Remap HADDR>8MB region to psram port HADDR[23] -> HADDR[28] */
++#define SF_CTRL_REMAP_4MB                               3    /*!< Remap HADDR>4MB region to psram port HADDR[22] -> HADDR[28] */
++
++/**
++ *  @brief Serial flash controller select clock type definition
++ */
++#define SF_CTRL_OWNER_SAHB                              0    /*!< System AHB bus control serial flash controller */
++#define SF_CTRL_OWNER_IAHB                              1    /*!< I-Code AHB bus control serial flash controller */
++
++/**
++ *  @brief Serial flash controller select clock type definition
++ */
++#define SF_CTRL_SAHB_CLOCK                              0    /*!< Serial flash controller select default sahb clock */
++#define SF_CTRL_FLASH_CLOCK                             1    /*!< Serial flash controller select flash clock */
++
++/**
++ *  @brief Read and write type definition
++ */
++#define SF_CTRL_READ                                    0    /*!< Serail flash read command flag */
++#define SF_CTRL_WRITE                                   1    /*!< Serail flash write command flag */
++
++/**
++ *  @brief Serail flash interface IO type definition
++ */
++#define SF_CTRL_NIO_MODE                                0    /*!< Normal IO mode define */
++#define SF_CTRL_DO_MODE                                 1    /*!< Dual Output mode define */
++#define SF_CTRL_QO_MODE                                 2    /*!< Quad Output mode define */
++#define SF_CTRL_DIO_MODE                                3    /*!< Dual IO mode define */
++#define SF_CTRL_QIO_MODE                                4    /*!< Quad IO mode define */
++
++/**
++ *  @brief Serail flash controller interface mode type definition
++ */
++#define SF_CTRL_SPI_MODE                                0    /*!< SPI mode define */
++#define SF_CTRL_QPI_MODE                                1    /*!< QPI mode define */
++
++/**
++ *  @brief Serail flash controller command mode type definition
++ */
++#define SF_CTRL_CMD_1_LINE                              0    /*!< Command in one line mode */
++#define SF_CTRL_CMD_4_LINES                             1   /*!< Command in four lines mode */
++
++/**
++ *  @brief Serail flash controller address mode type definition
++ */
++#define SF_CTRL_ADDR_1_LINE                             0    /*!< Address in one line mode */
++#define SF_CTRL_ADDR_2_LINES                            1    /*!< Address in two lines mode */
++#define SF_CTRL_ADDR_4_LINES                            2    /*!< Address in four lines mode */
++
++/**
++ *  @brief Serail flash controller dummy mode type definition
++ */
++#define SF_CTRL_DUMMY_1_LINE                            0    /*!< Dummy in one line mode */
++#define SF_CTRL_DUMMY_2_LINES                           1    /*!< Dummy in two lines mode */
++#define SF_CTRL_DUMMY_4_LINES                           2    /*!< Dummy in four lines mode */
++
++/**
++ *  @brief Serail flash controller data mode type definition
++ */
++#define SF_CTRL_DATA_1_LINE                             0    /*!< Data in one line mode */
++#define SF_CTRL_DATA_2_LINES                            1    /*!< Data in two lines mode */
++#define SF_CTRL_DATA_4_LINES                            2    /*!< Data in four lines mode */
++
++/**
++ *  @brief Serail flash controller AES mode type definition
++ */
++#define SF_CTRL_AES_CTR_MODE                            0    /*!< Serail flash AES CTR mode */
++#define SF_CTRL_AES_XTS_MODE                            1    /*!< Serail flash AES XTS mode */
++
++/**
++ *  @brief Serail flash controller AES key len type definition
++ */
++#define SF_CTRL_AES_128BITS                             0    /*!< Serail flash AES key 128 bits length */
++#define SF_CTRL_AES_256BITS                             1    /*!< Serail flash AES key 256 bits length */
++#define SF_CTRL_AES_192BITS                             2    /*!< Serail flash AES key 192 bits length */
++#define SF_CTRL_AES_128BITS_DOUBLE_KEY                  3    /*!< Serail flash AES key 128 bits length double key */
++
++typedef struct
++{
++    uint8_t  io_mode;
++    uint8_t  c_read_support;
++    uint8_t  clk_delay;
++    uint8_t  clk_invert;
++    uint8_t  reset_en_cmd;
++    uint8_t  reset_cmd;
++    uint8_t  reset_c_read_cmd;
++    uint8_t  reset_c_read_cmd_size;
++    uint8_t  jedec_id_cmd;
++    uint8_t  jedec_id_cmd_dmy_clk;
++    uint8_t  enter_32bits_addr_cmd;
++    uint8_t  exit_32bits_addr_cmd;
++    uint8_t  sector_size;
++    uint8_t  mid;
++    uint16_t page_size;
++    uint8_t  chip_erase_cmd;
++    uint8_t  sector_erase_cmd;
++    uint8_t  blk32_erase_cmd;
++    uint8_t  blk64_erase_cmd;
++    uint8_t  write_enable_cmd;
++    uint8_t  page_program_cmd;
++    uint8_t  qpage_program_cmd;
++    uint8_t  qpp_addr_mode;
++    uint8_t  fast_read_cmd;
++    uint8_t  fr_dmy_clk;
++    uint8_t  qpi_fast_read_cmd;
++    uint8_t  qpi_fr_dmy_clk;
++    uint8_t  fast_read_do_cmd;
++    uint8_t  fr_do_dmy_clk;
++    uint8_t  fast_read_dio_cmd;
++    uint8_t  fr_dio_dmy_clk;
++    uint8_t  fast_read_qo_cmd;
++    uint8_t  fr_qo_dmy_clk;
++    uint8_t  fast_read_qio_cmd;
++    uint8_t  fr_qio_dmy_clk;
++    uint8_t  qpi_fast_read_qio_cmd;
++    uint8_t  qpi_fr_qio_dmy_clk;
++    uint8_t  qpi_page_program_cmd;
++    uint8_t  write_vreg_enable_cmd;
++    uint8_t  wr_enable_index;
++    uint8_t  qe_index;
++    uint8_t  busy_index;
++    uint8_t  wr_enable_bit;
++    uint8_t  qe_bit;
++    uint8_t  busy_bit;
++    uint8_t  wr_enable_write_reg_len;
++    uint8_t  wr_enable_read_reg_len;
++    uint8_t  qe_write_reg_len;
++    uint8_t  qe_read_reg_len;
++    uint8_t  release_powerdown;
++    uint8_t  busy_read_reg_len;
++    uint8_t  read_reg_cmd[4];
++    uint8_t  write_reg_cmd[4];
++    uint8_t  enter_qpi;
++    uint8_t  exit_qpi;
++    uint8_t  c_read_mode;
++    uint8_t  c_rexit;
++    uint8_t  burst_wrap_cmd;
++    uint8_t  burst_wrap_cmd_dmy_clk;
++    uint8_t  burst_wrap_data_mode;
++    uint8_t  burst_wrap_data;
++    uint8_t  de_burst_wrap_cmd;
++    uint8_t  de_burst_wrap_cmd_dmy_clk;
++    uint8_t  de_burst_wrap_data_mode;
++    uint8_t  de_burst_wrap_data;
++    uint16_t time_e_sector;
++    uint16_t time_e_32k;
++    uint16_t time_e_64k;
++    uint16_t time_page_pgm;
++    uint16_t time_ce;
++    uint8_t  pd_delay;
++    uint8_t  qe_data;
++} __attribute__((packed)) spi_flash_cfg_type;
++
++struct sf_ctrl_cmd_cfg_type {
++    uint8_t rw_flag;                     /*!< Read write flag */
++    uint8_t cmd_mode;                    /*!< Command mode */
++    uint8_t addr_mode;                   /*!< Address mode */
++    uint8_t addr_size;                   /*!< Address size */
++    uint8_t dummy_clks;                  /*!< Dummy clocks */
++    uint8_t dummy_mode;                  /*!< Dummy mode */
++    uint8_t data_mode;                   /*!< Data mode */
++    uint8_t rsv[1];                      /*!< Reserved */
++    uint32_t nb_data;                    /*!< Transfer number of bytes */
++    uint32_t cmd_buf[2];                 /*!< Command buffer */
++};
++
++struct xram_flash_cfg {
++	spi_flash_cfg_type flash_cfg;
++	uint32_t flash_size;
++	uint32_t flash_id;
++} __attribute__((packed));
++
++#endif /* _BL808_SFLASH_H */
+-- 
+2.42.0
+
