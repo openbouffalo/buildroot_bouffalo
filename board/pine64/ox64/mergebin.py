@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # Description: Merge the Kernel, DTB, and OpenSBI into a single binary
-# From @BBBSnowball 
+# From @BBBSnowball
 import struct
 import argparse
 from math import inf
@@ -84,7 +84,7 @@ class FlashRegions(object):
         #         uint32_t offset;
         #         uint32_t size;
         #     } section[];
-        #     
+        #
         # } vm_boot_header_t;
         regions.header.data = struct.pack('<IIII', 0x4c4d5642, 1, len(self.regions)-1, 0)
         for k,v in self.regions.items():
@@ -101,9 +101,9 @@ class FlashRegions(object):
 whole_img_base = 0x00000000
 
 def make_regions():
-    regions = FlashRegions(7*MB)
+    regions = FlashRegions(704*kB)
     regions.add('header',      None,                    VM_BOOT_SECTION_HEADER,     whole_img_base,                                             max_size=0x100)
-    regions.add("dtb",         args.dtb,                VM_BOOT_SECTION_DTB,        whole_img_base + regions.header.max_size,                   max_size=0x10000)
+    regions.add("dtb",         args.dtb,                VM_BOOT_SECTION_DTB,        whole_img_base + regions.header.max_size,                   max_size=0x8000)
     regions.add("opensbi",     args.sbi,           VM_BOOT_SECTION_OPENSBI,    regions.dtb.flash_offset + regions.dtb.max_size,            max_size=0x20000)
     regions.add("linux",       args.kernel,             VM_BOOT_SECTION_KERNEL,     regions.opensbi.flash_offset + regions.opensbi.max_size    )
     return regions
