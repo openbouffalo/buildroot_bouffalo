@@ -14,4 +14,15 @@ mkdir -p $BINARIES_DIR/extlinux/
 cp $TARGET_DIR/boot/extlinux/* $BINARIES_DIR/extlinux/
 echo "Creating Filesystem Image"
 $BASE_DIR/../support/scripts/genimage.sh -c $BR2_EXTERNAL_BOUFFALO_BR_PATH/board/pine64/ox64/genimage.cfg
+
+# Build FIT image
+pushd $BINARIES_DIR
+cp $BR2_EXTERNAL_BOUFFALO_BR_PATH/board/pine64/ox64/bl808.its .
+$BINARIES_DIR/../host/bin/mkimage -f bl808.its bl808.itb
+popd
+
 echo "Completed - Images are at $BINARIES_DIR"
+
+# Reduce NOR flash image size
+rm -rf $TARGET_DIR/boot
+rm -rf $TARGET_DIR/lib/libgfortran.so*
