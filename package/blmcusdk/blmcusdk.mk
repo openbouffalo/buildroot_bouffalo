@@ -4,7 +4,7 @@
 #
 ################################################################################
 
-BLMCUSDK_VERSION = master
+BLMCUSDK_VERSION = openbouffalo_compat
 BLMCUSDK_SITE = $(call github,Pavlos1,bouffalo_sdk_oss,$(BLMCUSDK_VERSION))
 
 BLMCUSDK_LICENSE =  Apache-2.0 license
