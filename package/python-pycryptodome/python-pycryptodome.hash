@@ -1,0 +1,6 @@
+# md5, sha256 from https://pypi.org/pypi/pycryptodome/json
+md5  b6f99715010bbb3f5e0400adc0063dfb  pycryptodome-3.19.0.tar.gz
+sha256  bc35d463222cdb4dbebd35e0784155c81e161b9284e567e7e933d722e533331e  pycryptodome-3.19.0.tar.gz
+# Locally computed sha256 checksums
+sha256  4e04660d77c1c64e89d79537919fb8240fa21484a7e3db29f358b2c7f84ea073  LICENSE.rst
+sha256  90f7f2fe5827666516bc10bd27036491290d77662818eace211e007422f59d02  Doc/src/license.rst

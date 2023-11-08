@@ -1,0 +1,4 @@
+config BR2_PACKAGE_PYTHON_BFLB_CRYPTO_PLUS
+	bool "python-bflb-crypto-plus"
+	select BR2_PACKAGE_PYTHON_PYCRYPTODOME # runtime
+	help

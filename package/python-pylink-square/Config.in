@@ -1,0 +1,8 @@
+config BR2_PACKAGE_PYTHON_PYLINK_SQUARE
+	bool "python-pylink-square"
+	select BR2_PACKAGE_PYTHON_PSUTIL # runtime
+	select BR2_PACKAGE_PYTHON_SIX # runtime
+	help
+	  Python interface for SEGGER J-Link.
+
+	  http://www.github.com/Square/pylink

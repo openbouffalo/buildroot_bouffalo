@@ -1,0 +1,5 @@
+# md5, sha256 from https://pypi.org/pypi/pylink-square/json
+md5  1f7376ed1196bd39a83a0887ee27fe7b  pylink-square-1.2.0.tar.gz
+sha256  736cf9e0272e87cdca1189f632f8d511e8f079c0ab96252fc331189490253ac3  pylink-square-1.2.0.tar.gz
+# Locally computed sha256 checksums
+sha256  1aaa40c02c54e283ea224eee097864ddb56c521d076d37f8f8baf6479b568ea8  LICENSE.md
