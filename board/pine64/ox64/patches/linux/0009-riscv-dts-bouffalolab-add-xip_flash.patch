@@ -1,14 +1,14 @@
-From c32fe195358bd4ad3c0e9653432150393e7cbaed Mon Sep 17 00:00:00 2001
+From 85a3f9a35f3b43c1d2dec01287368eb1ba9b413e Mon Sep 17 00:00:00 2001
 From: Allen Martin <armartin@gmail.com>
 Date: Sun, 8 Jan 2023 02:26:04 -0800
-Subject: [PATCH 10/15] riscv: dts: bouffalolab: add xip_flash
+Subject: [PATCH 09/26] riscv: dts: bouffalolab: add xip_flash
 
 ---
  .../boot/dts/bouffalolab/bl808-sipeed-m1s.dts      | 14 ++++++++++++++
  1 file changed, 14 insertions(+)
 
 diff --git a/arch/riscv/boot/dts/bouffalolab/bl808-sipeed-m1s.dts b/arch/riscv/boot/dts/bouffalolab/bl808-sipeed-m1s.dts
-index 84e5aac6cbf8..bdb502ea5a54 100644
+index 84e5aac6c..bdb502ea5 100644
 --- a/arch/riscv/boot/dts/bouffalolab/bl808-sipeed-m1s.dts
 +++ b/arch/riscv/boot/dts/bouffalolab/bl808-sipeed-m1s.dts
 @@ -26,6 +26,20 @@ memory@50000000 {
@@ -33,5 +33,5 @@ index 84e5aac6cbf8..bdb502ea5a54 100644
  
  &uart0 {
 -- 
-2.39.0
+2.42.0
 

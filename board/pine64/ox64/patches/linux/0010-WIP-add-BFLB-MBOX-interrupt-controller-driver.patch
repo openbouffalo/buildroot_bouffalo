@@ -1,7 +1,7 @@
-From 986848ef501b28ccbe48336dfa201ad54b0e1e34 Mon Sep 17 00:00:00 2001
+From a172db14da18d80c8376eb55b3f13342e0d7e5e4 Mon Sep 17 00:00:00 2001
 From: Allen Martin <armartin@gmail.com>
 Date: Wed, 11 Jan 2023 18:14:53 -0800
-Subject: [PATCH 11/15] WIP: add BFLB MBOX interrupt controller driver
+Subject: [PATCH 10/26] WIP: add BFLB MBOX interrupt controller driver
 
 ---
  .../boot/dts/bouffalolab/bl808-sipeed-m1s.dts |   4 +
@@ -15,7 +15,7 @@ Subject: [PATCH 11/15] WIP: add BFLB MBOX interrupt controller driver
  create mode 100644 include/dt-bindings/mailbox/bflb-ipc.h
 
 diff --git a/arch/riscv/boot/dts/bouffalolab/bl808-sipeed-m1s.dts b/arch/riscv/boot/dts/bouffalolab/bl808-sipeed-m1s.dts
-index bdb502ea5a54..70259bad7dfd 100644
+index bdb502ea5..70259bad7 100644
 --- a/arch/riscv/boot/dts/bouffalolab/bl808-sipeed-m1s.dts
 +++ b/arch/riscv/boot/dts/bouffalolab/bl808-sipeed-m1s.dts
 @@ -45,3 +45,7 @@ rootfs@0 {
@@ -27,7 +27,7 @@ index bdb502ea5a54..70259bad7dfd 100644
 +	status = "okay";
 +};
 diff --git a/arch/riscv/boot/dts/bouffalolab/bl808.dtsi b/arch/riscv/boot/dts/bouffalolab/bl808.dtsi
-index c98ebb14ee10..c5cda8d74ccd 100644
+index c98ebb14e..c5cda8d74 100644
 --- a/arch/riscv/boot/dts/bouffalolab/bl808.dtsi
 +++ b/arch/riscv/boot/dts/bouffalolab/bl808.dtsi
 @@ -4,6 +4,7 @@
@@ -59,7 +59,7 @@ index c98ebb14ee10..c5cda8d74ccd 100644
  			compatible = "thead,c900-plic";
  			reg = <0xe0000000 0x4000000>;
 diff --git a/drivers/mailbox/Kconfig b/drivers/mailbox/Kconfig
-index 1495965bc394..c215da153fd7 100644
+index bc2e265cb..dccee54c2 100644
 --- a/drivers/mailbox/Kconfig
 +++ b/drivers/mailbox/Kconfig
 @@ -295,4 +295,13 @@ config QCOM_IPCC
@@ -77,7 +77,7 @@ index 1495965bc394..c215da153fd7 100644
 +
  endif
 diff --git a/drivers/mailbox/Makefile b/drivers/mailbox/Makefile
-index fc9376117111..02bba5d03d4b 100644
+index fc9376117..02bba5d03 100644
 --- a/drivers/mailbox/Makefile
 +++ b/drivers/mailbox/Makefile
 @@ -62,3 +62,5 @@ obj-$(CONFIG_SPRD_MBOX)		+= sprd-mailbox.o
@@ -88,7 +88,7 @@ index fc9376117111..02bba5d03d4b 100644
 +obj-$(CONFIG_BFLB_IPC)		+= bflb-ipc.o
 diff --git a/drivers/mailbox/bflb-ipc.c b/drivers/mailbox/bflb-ipc.c
 new file mode 100644
-index 000000000000..692dd20e35a8
+index 000000000..692dd20e3
 --- /dev/null
 +++ b/drivers/mailbox/bflb-ipc.c
 @@ -0,0 +1,381 @@
@@ -475,7 +475,7 @@ index 000000000000..692dd20e35a8
 +MODULE_LICENSE("GPL v2");
 diff --git a/include/dt-bindings/mailbox/bflb-ipc.h b/include/dt-bindings/mailbox/bflb-ipc.h
 new file mode 100644
-index 000000000000..1d4c4be6292e
+index 000000000..1d4c4be62
 --- /dev/null
 +++ b/include/dt-bindings/mailbox/bflb-ipc.h
 @@ -0,0 +1,16 @@
@@ -496,5 +496,5 @@ index 000000000000..1d4c4be6292e
 +
 +#endif
 -- 
-2.39.0
+2.42.0
 

@@ -1,7 +1,7 @@
-From 0f81618bb5609e7e79b3afb454e269a1f50c9952 Mon Sep 17 00:00:00 2001
+From 6075321045aaaf60d71aeaa7bf8cf8c1ff807cf1 Mon Sep 17 00:00:00 2001
 From: Allen Martin <armartin@gmail.com>
 Date: Sun, 15 Jan 2023 01:07:35 -0800
-Subject: [PATCH 19/26] sdhci-bflb: enable additional quirks
+Subject: [PATCH 15/26] sdhci-bflb: enable additional quirks
 
 Write protect polarity is confirmed backwards, the other quirks
 may not be needed.
@@ -10,7 +10,7 @@ may not be needed.
  1 file changed, 4 insertions(+)
 
 diff --git a/drivers/mmc/host/sdhci-bflb.c b/drivers/mmc/host/sdhci-bflb.c
-index c9141ddd7331..f6cc40dcf614 100644
+index c9141ddd7..f6cc40dcf 100644
 --- a/drivers/mmc/host/sdhci-bflb.c
 +++ b/drivers/mmc/host/sdhci-bflb.c
 @@ -55,6 +55,10 @@ static const struct sdhci_pltfm_data sdhci_bflb_pdata = {
@@ -25,5 +25,5 @@ index c9141ddd7331..f6cc40dcf614 100644
  };
  
 -- 
-2.25.1
+2.42.0
 
