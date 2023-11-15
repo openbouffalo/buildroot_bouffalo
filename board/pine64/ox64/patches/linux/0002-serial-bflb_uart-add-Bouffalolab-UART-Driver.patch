@@ -1,7 +1,7 @@
-From 350729c7e8e9a0764bc8d943b07f651e2c3f4183 Mon Sep 17 00:00:00 2001
+From 8d154ea4630d48f4abeb92b7f81b6502c16f895b Mon Sep 17 00:00:00 2001
 From: Jisheng Zhang <jszhang@kernel.org>
 Date: Sun, 20 Nov 2022 16:21:09 +0800
-Subject: [PATCH 02/15] serial: bflb_uart: add Bouffalolab UART Driver
+Subject: [PATCH 02/26] serial: bflb_uart: add Bouffalolab UART Driver
 
 Add the driver for Bouffalolab UART IP which is found in Bouffalolab
 SoCs such as bl808.
@@ -18,7 +18,7 @@ Signed-off-by: Jisheng Zhang <jszhang@kernel.org>
  create mode 100644 drivers/tty/serial/bflb_uart.c
 
 diff --git a/drivers/tty/serial/Kconfig b/drivers/tty/serial/Kconfig
-index c55b947f3cdb..4b1eb61436ae 100644
+index bdc568a4a..f9e61682a 100644
 --- a/drivers/tty/serial/Kconfig
 +++ b/drivers/tty/serial/Kconfig
 @@ -179,6 +179,24 @@ config SERIAL_ATMEL_TTYAT
@@ -47,10 +47,10 @@ index c55b947f3cdb..4b1eb61436ae 100644
  	bool "Serial console over KGDB NMI debugger port"
  	depends on KGDB_SERIAL_CONSOLE
 diff --git a/drivers/tty/serial/Makefile b/drivers/tty/serial/Makefile
-index 238a9557b487..8509cdc11d87 100644
+index d41234695..c3c565cea 100644
 --- a/drivers/tty/serial/Makefile
 +++ b/drivers/tty/serial/Makefile
-@@ -25,6 +25,7 @@ obj-$(CONFIG_SERIAL_8250) += 8250/
+@@ -26,6 +26,7 @@ obj-y += 8250/
  
  obj-$(CONFIG_SERIAL_AMBA_PL010) += amba-pl010.o
  obj-$(CONFIG_SERIAL_AMBA_PL011) += amba-pl011.o
@@ -60,7 +60,7 @@ index 238a9557b487..8509cdc11d87 100644
  obj-$(CONFIG_SERIAL_SA1100) += sa1100.o
 diff --git a/drivers/tty/serial/bflb_uart.c b/drivers/tty/serial/bflb_uart.c
 new file mode 100644
-index 000000000000..65f98ccf8fa8
+index 000000000..65f98ccf8
 --- /dev/null
 +++ b/drivers/tty/serial/bflb_uart.c
 @@ -0,0 +1,659 @@
@@ -724,10 +724,10 @@ index 000000000000..65f98ccf8fa8
 +MODULE_AUTHOR("Jisheng Zhang <jszhang@kernel.org>");
 +MODULE_LICENSE("GPL");
 diff --git a/include/uapi/linux/serial_core.h b/include/uapi/linux/serial_core.h
-index 3ba34d8378bd..dabbb5ea2857 100644
+index 281fa2865..0651fcc87 100644
 --- a/include/uapi/linux/serial_core.h
 +++ b/include/uapi/linux/serial_core.h
-@@ -276,4 +276,7 @@
+@@ -279,4 +279,7 @@
  /* Sunplus UART */
  #define PORT_SUNPLUS	123
  
@@ -736,5 +736,5 @@ index 3ba34d8378bd..dabbb5ea2857 100644
 +
  #endif /* _UAPILINUX_SERIAL_CORE_H */
 -- 
-2.39.0
+2.42.0
 

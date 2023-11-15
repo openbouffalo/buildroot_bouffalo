@@ -1,7 +1,7 @@
-From fc79d0beffc72950292e5adbe5e3481664e689d8 Mon Sep 17 00:00:00 2001
+From ffd37645597bd39996a148af2d92e0d0bee09688 Mon Sep 17 00:00:00 2001
 From: Allen Martin <armartin@gmail.com>
 Date: Sun, 5 Feb 2023 20:18:50 -0800
-Subject: [PATCH 25/31] riscv: dts: bflb: ox64: Fix address/size-cells
+Subject: [PATCH 21/26] riscv: dts: bflb: ox64: Fix address/size-cells
 
 The number of address cells needed here (one) does not match the
 implicitly-defined default number of cells.
@@ -12,7 +12,7 @@ Signed-off-by: Allen Martin <armartin@gmail.com>
  1 file changed, 2 insertions(+)
 
 diff --git a/arch/riscv/boot/dts/bouffalolab/bl808-pine64-ox64.dts b/arch/riscv/boot/dts/bouffalolab/bl808-pine64-ox64.dts
-index f9ed636291f6..f1db126d88e7 100644
+index ce8009594..63e53e554 100644
 --- a/arch/riscv/boot/dts/bouffalolab/bl808-pine64-ox64.dts
 +++ b/arch/riscv/boot/dts/bouffalolab/bl808-pine64-ox64.dts
 @@ -34,6 +34,8 @@ xip_flash@58500000 {
@@ -25,5 +25,5 @@ index f9ed636291f6..f1db126d88e7 100644
  };
  
 -- 
-2.25.1
+2.42.0
 

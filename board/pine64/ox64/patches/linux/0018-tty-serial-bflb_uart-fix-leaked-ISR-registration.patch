@@ -1,7 +1,7 @@
-From 21dd2b6821d171463407a77536ea8044dc64bbeb Mon Sep 17 00:00:00 2001
+From 6ba7286b7a2d2c43d7cf5366fdc7bb7ca7db605c Mon Sep 17 00:00:00 2001
 From: Allen Martin <armartin@gmail.com>
 Date: Fri, 20 Jan 2023 19:42:33 -0800
-Subject: [PATCH 20/21] tty: serial: bflb_uart: fix leaked ISR registration
+Subject: [PATCH 18/26] tty: serial: bflb_uart: fix leaked ISR registration
 
 -call devm_free_irq() in shutdown to release ISR registered in
  startup.
@@ -16,7 +16,7 @@ Subject: [PATCH 20/21] tty: serial: bflb_uart: fix leaked ISR registration
  1 file changed, 79 insertions(+), 54 deletions(-)
 
 diff --git a/drivers/tty/serial/bflb_uart.c b/drivers/tty/serial/bflb_uart.c
-index b091ad7a891a..5911f489959c 100644
+index b091ad7a8..5911f4899 100644
 --- a/drivers/tty/serial/bflb_uart.c
 +++ b/drivers/tty/serial/bflb_uart.c
 @@ -82,12 +82,17 @@
@@ -243,5 +243,5 @@ index b091ad7a891a..5911f489959c 100644
  	port->flags = UPF_BOOT_AUTOCONF;
  	port->dev = &pdev->dev;
 -- 
-2.25.1
+2.42.0
 
