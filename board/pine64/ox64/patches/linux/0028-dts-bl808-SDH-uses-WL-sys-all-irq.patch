@@ -1,0 +1,110 @@
+From 09a33399684883c8c0aef48693e00f5d0747539d Mon Sep 17 00:00:00 2001
+From: qwang <qwang@bouffalolab.com>
+Date: Tue, 12 Sep 2023 14:04:14 +0800
+Subject: [PATCH] dts: bl808: Use WL sys all irq
+
+Signed-off-by: qwang <qwang@bouffalolab.com>
+---
+ .../dts/bouffalolab/bl808-pine64-ox64.dts     |  2 ++
+ .../boot/dts/bouffalolab/bl808-sipeed-m1s.dts |  2 ++
+ arch/riscv/boot/dts/bouffalolab/bl808.dtsi    | 26 +++++++++++--------
+ 3 files changed, 19 insertions(+), 11 deletions(-)
+
+diff --git a/arch/riscv/boot/dts/bouffalolab/bl808-pine64-ox64.dts b/arch/riscv/boot/dts/bouffalolab/bl808-pine64-ox64.dts
+index 0d8ba867a..e5c291471 100644
+--- a/arch/riscv/boot/dts/bouffalolab/bl808-pine64-ox64.dts
++++ b/arch/riscv/boot/dts/bouffalolab/bl808-pine64-ox64.dts
+@@ -59,6 +59,8 @@ &sdhci0 {
+ 	status = "okay";
+ };
+ 
++/*
+ &ipclic {
+ 	status = "okay";
+ };
++*/
+diff --git a/arch/riscv/boot/dts/bouffalolab/bl808-sipeed-m1s.dts b/arch/riscv/boot/dts/bouffalolab/bl808-sipeed-m1s.dts
+index 4a12e6941..f713d468c 100644
+--- a/arch/riscv/boot/dts/bouffalolab/bl808-sipeed-m1s.dts
++++ b/arch/riscv/boot/dts/bouffalolab/bl808-sipeed-m1s.dts
+@@ -69,6 +69,8 @@ &sdhci0 {
+ 	status = "okay";
+ };
+ 
++/*
+ &ipclic {
+ 	status = "okay";
+ };
++*/
+diff --git a/arch/riscv/boot/dts/bouffalolab/bl808.dtsi b/arch/riscv/boot/dts/bouffalolab/bl808.dtsi
+index 06d2453ef..091048440 100644
+--- a/arch/riscv/boot/dts/bouffalolab/bl808.dtsi
++++ b/arch/riscv/boot/dts/bouffalolab/bl808.dtsi
+@@ -75,8 +75,7 @@ pinctrl: pinctrl@0x200008C4 {
+ 
+ 			interrupt-controller;
+ 			#interrupt-cells = <2>;
+-			interrupts-extended = <&ipclic BFLB_IPC_SOURCE_M0
+-					BFLB_IPC_DEVICE_GPIO IRQ_TYPE_EDGE_RISING>;
++			interrupts-extended = <&m0ic 44>;
+ 
+ 			sdh_pins: sdh-pins {
+ 				pins = "GPIO0", "GPIO1", "GPIO2", "GPIO3", "GPIO4", "GPIO5";
+@@ -101,10 +100,7 @@ uart0: serial@30002000 {
+ 		uart1: serial@0x2000AA00 {
+ 			compatible = "bflb,bl808-uart";
+ 			reg = <0x2000AA00 0x0100>;
+-			interrupts-extended = <&ipclic BFLB_IPC_SOURCE_M0
+-								BFLB_IPC_DEVICE_UART2
+-								IRQ_TYPE_EDGE_RISING>;
+-			mboxes = <&ipclic BFLB_IPC_SOURCE_M0 BFLB_IPC_DEVICE_UART2>;
++			interrupts-extended = <&m0ic 30>;
+ 			clocks = <&xtal>;
+ 			status = "disabled";
+ 		};
+@@ -112,14 +108,12 @@ BFLB_IPC_DEVICE_UART2
+ 		sdhci0: sdhci@20060000 {
+ 			compatible = "bflb,bl808-sdhci";
+ 			reg = <0x20060000 0x100>;
+-			interrupts-extended = <&ipclic BFLB_IPC_SOURCE_M0
+-						       BFLB_IPC_DEVICE_SDHCI
+-						       IRQ_TYPE_EDGE_RISING>;
+-			mboxes = <&ipclic BFLB_IPC_SOURCE_M0 BFLB_IPC_DEVICE_SDHCI>;
++			interrupts-extended = <&m0ic 17>;
+ 			clocks = <&sdh>;
+ 			status = "disabled";
+ 		};
+ 
++		/*
+ 		ipclic: mailbox@30005000 {
+ 			compatible = "bflb,bl808-ipc";
+ 			reg = <0x30005000 0x20>,
+@@ -132,6 +126,16 @@ ipclic: mailbox@30005000 {
+ 			#mbox-cells = <2>;
+ 			status = "disabled";
+ 		};
++		*/
++
++		m0ic: mcu-interrupt-controller@20000050 {
++			compatible = "bflb,bl808-mcu-irq";
++			reg = <0x20000050 0x18>;
++			interrupts = <81 IRQ_TYPE_LEVEL_HIGH>;
++			interrupt-controller;
++			#address-cells = <0>;
++			#interrupt-cells = <1>;
++		};
+ 
+ 		plic: interrupt-controller@e0000000 {
+ 			compatible = "thead,c900-plic";
+@@ -141,7 +145,7 @@ plic: interrupt-controller@e0000000 {
+ 			interrupt-controller;
+ 			#address-cells = <0>;
+ 			#interrupt-cells = <2>;
+-			riscv,ndev = <64>;
++			riscv,ndev = <82>;
+ 		};
+ 
+ 		clint: timer@e4000000 {
+-- 
+2.42.1
+
