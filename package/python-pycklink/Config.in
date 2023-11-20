@@ -1,6 +1,0 @@
-config BR2_PACKAGE_PYTHON_PYCKLINK
-	bool "python-pycklink"
-	help
-	  Python interface for the T-HEAD CKLink.
-
-	  https://pypi.org/project/PyCKLink/
