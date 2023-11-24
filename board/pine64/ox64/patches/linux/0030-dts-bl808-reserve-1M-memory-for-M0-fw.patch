@@ -1,0 +1,59 @@
+From a70feac1e381ac82d259ffee4c7d32ec60f5429d Mon Sep 17 00:00:00 2001
+From: qwang <qwang@bouffalolab.com>
+Date: Fri, 24 Nov 2023 11:08:20 +0800
+Subject: [PATCH] dts: bl808: reserve 1M memory for M0 fw
+
+Signed-off-by: qwang <qwang@bouffalolab.com>
+---
+ .../riscv/boot/dts/bouffalolab/bl808-pine64-ox64.dts | 11 +++++++++++
+ arch/riscv/boot/dts/bouffalolab/bl808-sipeed-m1s.dts | 12 ++++++++++++
+ 2 files changed, 23 insertions(+)
+
+diff --git a/arch/riscv/boot/dts/bouffalolab/bl808-pine64-ox64.dts b/arch/riscv/boot/dts/bouffalolab/bl808-pine64-ox64.dts
+index e5c291471..c22760b88 100644
+--- a/arch/riscv/boot/dts/bouffalolab/bl808-pine64-ox64.dts
++++ b/arch/riscv/boot/dts/bouffalolab/bl808-pine64-ox64.dts
+@@ -28,6 +28,17 @@ memory@50000000 {
+ 		reg = <0x50000000 0x04000000>;
+ 	};
+ 
++	reserved-memory {
++		#address-cells = <1>;
++		#size-cells = <1>;
++		ranges;
++
++		m0_psram_reserved: m0_psram@53F00000 {
++			reg = <0x53F00000 0x100000>;
++			status = "okay";
++		};
++	};
++
+ 	xip_flash@58500000 {
+ 		compatible = "mtd-rom";
+ 		reg = <0x58500000 0x400000>;
+diff --git a/arch/riscv/boot/dts/bouffalolab/bl808-sipeed-m1s.dts b/arch/riscv/boot/dts/bouffalolab/bl808-sipeed-m1s.dts
+index f713d468c..29f1c0323 100644
+--- a/arch/riscv/boot/dts/bouffalolab/bl808-sipeed-m1s.dts
++++ b/arch/riscv/boot/dts/bouffalolab/bl808-sipeed-m1s.dts
+@@ -29,6 +29,18 @@ memory@50000000 {
+ 		reg = <0x50000000 0x04000000>;
+ 	};
+ 
++	reserved-memory {
++		#address-cells = <1>;
++		#size-cells = <1>;
++		ranges;
++
++		m0_psram_reserved: m0_psram@53F00000 {
++			reg = <0x53F00000 0x100000>;
++			status = "okay";
++		};
++	};
++
++
+ 	xip_flash@58500000 {
+ 		compatible = "mtd-rom";
+ 		reg = <0x58500000 0x400000>;
+-- 
+2.42.1
+
