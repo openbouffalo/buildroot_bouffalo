@@ -1,1 +1,2 @@
 source "$BR2_EXTERNAL_BOUFFALO_BR_PATH/package/cloudutils/Config.in"
+source "$BR2_EXTERNAL_BOUFFALO_BR_PATH/package/blwnet_xram/Config.in"

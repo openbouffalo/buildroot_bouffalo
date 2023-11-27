@@ -1,0 +1,30 @@
+From 3b8d55fc367e204ff049318de27f020c0f1eb8d6 Mon Sep 17 00:00:00 2001
+From: qwang <qwang@bouffalolab.com>
+Date: Fri, 24 Nov 2023 14:09:32 +0800
+Subject: [PATCH] dts: bl808: add IPC node
+
+Signed-off-by: qwang <qwang@bouffalolab.com>
+---
+ arch/riscv/boot/dts/bouffalolab/bl808.dtsi | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/arch/riscv/boot/dts/bouffalolab/bl808.dtsi b/arch/riscv/boot/dts/bouffalolab/bl808.dtsi
+index 091048440..597fe2e39 100644
+--- a/arch/riscv/boot/dts/bouffalolab/bl808.dtsi
++++ b/arch/riscv/boot/dts/bouffalolab/bl808.dtsi
+@@ -148,6 +148,12 @@ plic: interrupt-controller@e0000000 {
+ 			riscv,ndev = <82>;
+ 		};
+ 
++		ipc {
++			compatible = "bflb-ipc";
++			interrupts = <54 IRQ_TYPE_LEVEL_HIGH>; /* IPC #54 */
++			status = "okay";
++		};
++
+ 		clint: timer@e4000000 {
+ 			compatible = "thead,c900-clint";
+ 			reg = <0xe4000000 0xc000>;
+-- 
+2.42.1
+
