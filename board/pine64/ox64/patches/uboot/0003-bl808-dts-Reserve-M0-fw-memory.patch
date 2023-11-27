@@ -1,0 +1,40 @@
+From e61d86f357314bed72ebe4997dc6496998ca86db Mon Sep 17 00:00:00 2001
+From: qwang <qwang@bouffalolab.com>
+Date: Fri, 15 Sep 2023 17:04:52 +0800
+Subject: [PATCH] bl808: dts: Reserve M0 fw memory
+
+Signed-off-by: qwang <qwang@bouffalolab.com>
+---
+ arch/riscv/dts/bl808-d0-ox64-u-boot.dtsi | 2 +-
+ arch/riscv/dts/bl808-m0-ox64-u-boot.dtsi | 2 +-
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/arch/riscv/dts/bl808-d0-ox64-u-boot.dtsi b/arch/riscv/dts/bl808-d0-ox64-u-boot.dtsi
+index ab2fcd3c32..7d1e594968 100644
+--- a/arch/riscv/dts/bl808-d0-ox64-u-boot.dtsi
++++ b/arch/riscv/dts/bl808-d0-ox64-u-boot.dtsi
+@@ -1,7 +1,7 @@
+ / {
+ 	memory {
+ 		device_type = "memory";
+-		reg = <0x50000000 0x4000000>;
++		reg = <0x50000000 0x3F00000>;
+ 	};
+ };
+ 
+diff --git a/arch/riscv/dts/bl808-m0-ox64-u-boot.dtsi b/arch/riscv/dts/bl808-m0-ox64-u-boot.dtsi
+index 3b17c4c7a1..20ad56293a 100644
+--- a/arch/riscv/dts/bl808-m0-ox64-u-boot.dtsi
++++ b/arch/riscv/dts/bl808-m0-ox64-u-boot.dtsi
+@@ -1,7 +1,7 @@
+ / {
+ 	memory {
+ 		device_type = "memory";
+-		reg = <0x50000000 0x4000000>;
++		reg = <0x50000000 0x3F00000>;
+ 	};
+ };
+ 
+-- 
+2.42.0
+
