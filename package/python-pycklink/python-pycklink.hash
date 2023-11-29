@@ -1,0 +1,5 @@
+# md5, sha256 from https://pypi.org/pypi/pycklink/json
+md5  ca6cca962f081382a310a317daf1b1da  pycklink-0.1.1.tar.gz
+sha256  51bddaef6575e4591eca8ed191b8cc6a3e9f694adc0bc46445149b354baafe4b  pycklink-0.1.1.tar.gz
+# Locally computed sha256 checksums
+sha256  7da384693e018c0ea39f61fa01bbed721229d275ff97f7f0eac48d97cbd3de20  LICENSE
