@@ -1,0 +1,8 @@
+comment "blwnet_xram needs a Linux kernel to be built"
+	depends on !BR2_LINUX_KERNEL
+
+config BR2_PACKAGE_BLWNET_XRAM
+	bool "blwnet_xram"
+	depends on BR2_LINUX_KERNEL
+	help
+	  blwnet_xram for BL808
