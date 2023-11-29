@@ -4,7 +4,7 @@
 #
 ################################################################################
 
-BLWNET_XRAM_VERSION = d133be8588f46e7b48d8a43ba157fc8d40797288
+BLWNET_XRAM_VERSION = 2c00744670af7af3281e62677fafface3536617a
 BLWNET_XRAM_SITE = $(call github,bouffalolab,blwnet_xram,$(BLWNET_XRAM_VERSION))
 BLWNET_XRAM_LICENSE = GPL-2.0(kernel driver), Apache 2.0(userspace)
 
