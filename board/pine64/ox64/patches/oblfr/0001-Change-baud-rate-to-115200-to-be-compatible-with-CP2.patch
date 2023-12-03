@@ -1,0 +1,39 @@
+From e29daa016948d06a777b45cc93e6d86604b24f3a Mon Sep 17 00:00:00 2001
+From: "Grant T. Olson" <kgo@grant-olson.net>
+Date: Sun, 29 Jan 2023 13:15:16 -0500
+Subject: [PATCH] Change baud rate to 115200 to be compatible with CP2102
+
+---
+ apps/d0_lowload/src/main.c | 2 +-
+ bsp/ox64/board.c           | 2 +-
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/apps/d0_lowload/src/main.c b/apps/d0_lowload/src/main.c
+index 140c149..fef1b9e 100644
+--- a/apps/d0_lowload/src/main.c
++++ b/apps/d0_lowload/src/main.c
+@@ -202,7 +202,7 @@ int main(void)
+     bflb_gpio_init(gpio, GPIO_PIN_17, 21 | GPIO_ALTERNATE | GPIO_PULLUP | GPIO_SMT_EN | GPIO_DRV_1);
+ 
+     struct bflb_uart_config_s cfg;
+-    cfg.baudrate = 2000000;
++    cfg.baudrate = 115200;
+     cfg.data_bits = UART_DATA_BITS_8;
+     cfg.stop_bits = UART_STOP_BITS_1;
+     cfg.parity = UART_PARITY_NONE;
+diff --git a/bsp/ox64/board.c b/bsp/ox64/board.c
+index 846b9f1..ca1b10f 100644
+--- a/bsp/ox64/board.c
++++ b/bsp/ox64/board.c
+@@ -204,7 +204,7 @@ static void console_init()
+     bflb_gpio_init(gpio, GPIO_PIN_17, 21 | GPIO_ALTERNATE | GPIO_PULLUP | GPIO_SMT_EN | GPIO_DRV_1);
+ #endif
+     struct bflb_uart_config_s cfg;
+-    cfg.baudrate = 2000000;
++    cfg.baudrate = 115200;
+     cfg.data_bits = UART_DATA_BITS_8;
+     cfg.stop_bits = UART_STOP_BITS_1;
+     cfg.parity = UART_PARITY_NONE;
+-- 
+2.34.1
+

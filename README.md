@@ -54,10 +54,13 @@ Download your prefered image above and extract the files.
 - Enable 'Single Download', set Address with 0x800000, choose [bl808-firmware.bin]
 - Click 'Create & Download' again and wait until it's done
 - flash the sdcard-pine64-*.img.xz to your SD card (you can use dd (after uncompressing) or https://github.com/balena-io/etcher)
-- Serial Console access:
+- Linux Serial Console access:
     + UART TX is physical pin 32/GPIO 16.
     + UART RX is physical pin 31/GPIO 17.
-    + Baud 2000000.
+- 32 Bit M0 processor system initialization logs:
+    + UART TX is physical pin 1/GPIO 14.
+    + UART RX is physical pin 2/GPIO 15.
+    + Baud 115200.
 - Enjoy!
 
 ## Compiling Applications for BL808 based boards
