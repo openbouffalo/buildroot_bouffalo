@@ -19,7 +19,7 @@ CONFIG_BOOTSTD_DEFAULTS=y
 CONFIG_BOOTMETH_SCRIPT=y
 CONFIG_DYNAMIC_SYS_CLK_FREQ=y
 CONFIG_BOOTDELAY=5
-CONFIG_BOOTCOMMAND="mmc rescan; sleep 1; mmc rescan; run distro_bootcmd"
+CONFIG_BOOTCOMMAND="if mmc rescan; then else bflb_sdh sdh 8; bflb_sdh bus 1; setenv bootargs ${bootargs} sdhci-bflb.bus_div=1; fi; sleep 1; mmc rescan; run distro_bootcmd"
 # CONFIG_BOOTM_NETBSD is not set
 # CONFIG_BOOTM_PLAN9 is not set
 # CONFIG_BOOTM_RTEMS is not set

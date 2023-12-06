@@ -1,0 +1,99 @@
+From: Werner Almesberger <werner@almesberger.net>
+Subject: override for SDH clock dividers on BL808
+
+--- a/drivers/mmc/bflb_sdhci.c.orig	2023-04-17 21:42:50.549404368 -0300
++++ b/drivers/mmc/bflb_sdhci.c	2023-04-17 22:06:52.379389437 -0300
+@@ -1,5 +1,8 @@
+ // SPDX-License-Identifier: GPL-2.0+
+ 
++#include <common.h>
++#include <command.h>
++#include <bl808/glb_reg.h>
+ #include <clk.h>
+ #include <dm.h>
+ #include <mmc.h>
+@@ -10,6 +13,9 @@
+ 	struct mmc		mmc;
+ };
+ 
++static unsigned sdh_override = 0;
++static unsigned bus_override = 0;
++
+ static int bflb_sdhci_bind(struct udevice *dev)
+ {
+ 	struct bflb_sdhci_plat *plat = dev_get_plat(dev);
+@@ -17,6 +23,38 @@
+ 	return sdhci_bind(dev, &plat->mmc, &plat->cfg);
+ }
+ 
++static int bflb_sdhci_set_ios_post(struct sdhci_host *host)
++{
++	unsigned old, new;
++
++	if (sdh_override) {
++		old = new =
++		    *(volatile uint32_t *) (GLB_SDH_CFG0_OFFSET | 0x20000000);
++		new &= ~GLB_REG_SDH_CLK_DIV_MSK;
++		new |= ((sdh_override - 1) << GLB_REG_SDH_CLK_DIV_POS) &
++		    GLB_REG_SDH_CLK_DIV_MSK;
++		printf("SDH_CFG0: 0x%08x -> 0x%08x\n", old, new);
++		*(volatile uint32_t *) (GLB_SDH_CFG0_OFFSET | 0x20000000) = new;
++	}
++	if (bus_override) {
++		old = new = sdhci_readw(host, SDHCI_CLOCK_CONTROL);
++		new &= ~(SDHCI_DIV_MASK << SDHCI_DIVIDER_SHIFT |
++		    (SDHCI_DIV_HI_MASK >> SDHCI_DIV_MASK_LEN)
++		    << SDHCI_DIVIDER_HI_SHIFT);
++		new |= ((bus_override - 1) & SDHCI_DIV_MASK)
++		    << SDHCI_DIVIDER_SHIFT;
++		new |= (((bus_override - 1) & SDHCI_DIV_HI_MASK) >>
++		    SDHCI_DIV_MASK_LEN) << SDHCI_DIVIDER_HI_SHIFT;
++		printf("SDHCI_CLOCK_CONTROL: 0x%04x -> 0x%04x\n", old, new);
++		sdhci_writew(host, new, SDHCI_CLOCK_CONTROL);
++	}
++	return 0;
++}
++
++static const struct sdhci_ops bflb_sdhci_ops = {
++	.set_ios_post = bflb_sdhci_set_ios_post
++};
++
+ static int bflb_sdhci_probe(struct udevice *dev)
+ {
+ 	struct mmc_uclass_priv *upriv = dev_get_uclass_priv(dev);
+@@ -47,6 +85,7 @@
+ 	host->mmc = &plat->mmc;
+ 	host->mmc->dev = dev;
+ 	host->mmc->priv = host;
++	host->ops = &bflb_sdhci_ops;
+ 	upriv->mmc = &plat->mmc;
+ 
+ 	ret = sdhci_setup_cfg(&plat->cfg, host, 0, 0);
+@@ -65,6 +104,27 @@
+ 	return ret;
+ }
+ 
++static int do_bflb_sdhci(struct cmd_tbl *cmdtp, int flag, int argc,
++    char *const argv[])
++{
++	if (argc != 3)
++		return CMD_RET_USAGE;
++
++        if (!strncmp(argv[1], "sdh", 3))
++                sdh_override = simple_strtoul(argv[2], NULL, 0);
++        else if (!strncmp(argv[1], "bus", 3))
++                bus_override = simple_strtoul(argv[2], NULL, 0);
++	else
++		return CMD_RET_USAGE;
++
++	return 0;
++}
++
++U_BOOT_CMD(bflb_sdh, 3, 0, do_bflb_sdhci,
++        "tweak BL808 SDH clock generation",
++        "sdh divider - override SDH clock divider (0 to disable override)\n"
++        "bflb_sdh bus divider - override SD bus divider");
++
+ static const struct udevice_id bflb_sdhci_match[] = {
+ 	{ .compatible = "bflb,bl808-sdhci" },
+ 	{ }
